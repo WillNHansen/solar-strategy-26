@@ -1,8 +1,5 @@
 """
 Vehicle and race parameters.
-
-Values marked TODO need measurement or sourcing before the optimizer gives
-meaningful results. Everything else is a reasonable starting estimate.
 """
 
 from __future__ import annotations
@@ -17,7 +14,7 @@ class VehicleParams:
     g:   float = 9.81       # gravity m/s²
 
     # ── Mass ─────────────────────────────────────────────────────────────────
-    m: float = 300.0        # TODO: weigh car + driver + full battery pack (kg)
+    m: float = 290        # TODO: weigh car + driver + full battery pack (kg)
 
     # ── Aerodynamics ─────────────────────────────────────────────────────────
     # From aero model. If a full CdA(β) yaw curve is available, pass it as
@@ -49,7 +46,7 @@ class VehicleParams:
                               # Literature range: 0.60–0.75
 
     # ── Battery ──────────────────────────────────────────────────────────────
-    Eb_max: float = 5000.0  # TODO: confirm usable capacity (Wh)
+    Eb_max: float = 5180.0  # TODO: confirm usable capacity (Wh)
     Eb_min: float = 250.0   # 5% floor; model error means running to true zero is unsafe
 
     # Battery charging/discharging round-trip efficiency (charge at √η, discharge at √η)

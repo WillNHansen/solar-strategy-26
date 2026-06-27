@@ -18,7 +18,7 @@ We didn't follow this line because our model violates its key assumptions:
 
 The Michigan (Betancur/Yesil) line takes the alternative approach: build a detailed simulation and run a numerical optimizer over it. Michigan ran multiple simulations in parallel with different weather inputs mid-race and used the spread to judge forecast uncertainty. This is the practical approach for real racing — re-runnable in minutes when conditions change, and naturally handles all the nonlinearities.
 
-**Our choice:** simulate each segment with the full drivetrain equation (Betancur §4.3), then minimize total time with SLSQP (gradient-based, fast) or DP (global, exact). Same philosophy as Michigan; different optimizer.
+**Our choice:** simulate each segment with the full drivetrain equation (Betancur, research_notes.md §2.3), then minimize total time with SLSQP (gradient-based, fast) or DP (global, exact). Same philosophy as Michigan; different optimizer.
 
 ### 1.2 Why SLSQP as the primary optimizer
 
@@ -98,7 +98,7 @@ SLSQP is the gradient-based workhorse: ~7 seconds to converge on a 3000-segment 
 
 ### 3.6 Max's model — prior SSCP optimizer (last race)
 
-MATLAB-based car model used at the most recent race. Direct predecessor to `strategy/optimize.py`; see research_notes.md §2.5.
+MATLAB-based car model used at the most recent race. Direct predecessor to `python/optimize.py`. Find it before re-deriving physics from scratch.
 
 ---
 
