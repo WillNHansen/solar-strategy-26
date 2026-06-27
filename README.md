@@ -22,10 +22,11 @@ Requires Python 3.10+.
 pip install -r requirements.txt
 ```
 
-All scripts are run as modules from the repo root (`solar-strategy-26/`):
+All scripts run as modules **from the repo root** (the directory containing `python/`, `gpx/`, and `results/`):
 
 ```bash
-cd solar-strategy-26
+cd solar-strategy-26   # the repo root
+python -m python.main ...
 ```
 
 ## Usage
@@ -33,7 +34,7 @@ cd solar-strategy-26
 ### Run the optimizer
 
 ```bash
-python -m strategy.python.main \
+python -m python.main \
   --gpx gpx/Seg1A.gpx \
   --start "2026-07-13 09:00" \
   --output results/plan.json
@@ -42,7 +43,7 @@ python -m strategy.python.main \
 With live Solcast weather (requires API key):
 
 ```bash
-python -m strategy.python.main \
+python -m python.main \
   --gpx gpx/Seg1A.gpx \
   --start "2026-07-13 09:00" \
   --solcast-key YOUR_KEY \
@@ -60,14 +61,21 @@ Without `--solcast-key`, synthetic weather is used — good for development and 
 | `--smooth` | 5 | Grade smoothing window (segments) |
 | `--max-iter` | 2000 | SLSQP iteration limit |
 | `--output` | None | JSON output path |
+| `--plot` | None | Save a velocity + battery plot (PNG) to this path |
 | `--verbose` | False | Print per-segment details |
+
+The `--plot` PNG stacks the optimized speed profile (top) over the battery trajectory (bottom) against distance, with the seed (v\*) overlaid, overnight stops marked, and the battery floor/ceiling drawn in:
+
+```bash
+python -m python.main --gpx gpx/Seg1A.gpx --start "2026-07-13 09:00" --plot results/strategy.png
+```
 
 ### Multi-seed convergence experiment
 
 Runs the SLSQP optimizer from 10 different starting points in parallel to test for local optima:
 
 ```bash
-python -m strategy.python.multi_seed \
+python -m python.multi_seed \
   --gpx gpx/Seg1A.gpx \
   --start "2026-07-13 09:00"
 ```
@@ -82,13 +90,14 @@ Output goes to `results/multi_seed_results.json` by default.
 | `--segment-m` | 5000 | Segment length in metres |
 | `--max-iter` | 2000 | SLSQP iteration limit per seed |
 | `--output` | `results/multi_seed_results.json` | JSON output path |
+| `--plot` | None | Save a velocity + battery comparison plot (PNG) overlaying all seeds |
 
 ### Generate a synthetic route
 
 Creates a synthetic GPX for development and testing when the real route isn't available:
 
 ```bash
-python -m strategy.python.make_synthetic_gpx
+python -m python.make_synthetic_gpx
 ```
 
 Output goes to `gpx/wsc_synthetic.gpx` by default.
@@ -99,6 +108,24 @@ Output goes to `gpx/wsc_synthetic.gpx` by default.
 | `--n-points` | 5000 | Number of waypoints (~500m spacing) |
 | `--noise` | 15.0 | Terrain elevation noise amplitude (m) |
 | `--wavelength` | 25.0 | Terrain noise wavelength (km) |
+
+### Plotting from your own scripts
+
+`python/plot.py` exposes two helpers for use beyond the CLI flags:
+
+- `plot_result(segments, result, vehicle, race, path, show_seed=True)` — a single run.
+- `plot_comparison(segments, results, labels, vehicle, race, path)` — overlay several runs, e.g. SLSQP vs DP vs hybrid:
+
+```python
+from python.optimize import run_optimizer, run_dp, run_dp_then_slsqp
+from python.plot import plot_comparison
+
+runs = [run_optimizer(segments, weather, vehicle, race),
+        run_dp(segments, weather, vehicle, race),
+        run_dp_then_slsqp(segments, weather, vehicle, race)]
+plot_comparison(segments, runs, ["SLSQP", "DP", "hybrid"], vehicle, race,
+                "results/compare.png")
+```
 
 ## Vehicle and race parameters
 

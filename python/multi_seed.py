@@ -17,13 +17,13 @@ from pathlib import Path
 
 import numpy as np
 
-from strategy.python.params import VehicleParams, RaceParams
-from strategy.python.route import load_gpx, smooth_grade, total_distance_km
-from strategy.python.weather import synthetic_weather
-from strategy.python.optimize import (
+from python.params import VehicleParams, RaceParams
+from python.route import load_gpx, smooth_grade, total_distance_km
+from python.weather import synthetic_weather
+from python.optimize import (
     run_multi_seed, make_constant_seed, _build_bounds, _seed_v_star,
 )
-from strategy.python.schedule import (
+from python.schedule import (
     compute_arrival_times, find_day_boundaries, overnight_charge_Wh,
 )
 
@@ -36,6 +36,8 @@ def main():
     parser.add_argument("--n-seeds",   type=int,   default=10)
     parser.add_argument("--max-iter",  type=int,   default=2000)
     parser.add_argument("--output",    default=str(Path(__file__).resolve().parents[1] / "results" / "multi_seed_results.json"))
+    parser.add_argument("--plot",      default=None,
+                        help="Save a velocity + battery comparison plot (PNG) to this path")
     args = parser.parse_args()
 
     race_start = datetime.fromisoformat(args.start)
@@ -112,6 +114,13 @@ def main():
     with open(args.output, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nResults written to {args.output}")
+
+    # ── Optional comparison plot ──────────────────────────────────────────────
+    if args.plot:
+        from python.plot import plot_comparison
+        plot_comparison(segments, results, labels, vehicle, race, args.plot,
+                        title="Multi-seed comparison")
+        print(f"Plot written to {args.plot}")
 
 
 if __name__ == "__main__":

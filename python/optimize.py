@@ -27,11 +27,11 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
-from strategy.python.params import VehicleParams, RaceParams
-from strategy.python.route import RouteSegment
-from strategy.python.weather import SegmentWeather
-from strategy.python.physics import critical_speed_ms, max_speed_from_discharge_limit
-from strategy.python.simulate import (
+from python.params import VehicleParams, RaceParams
+from python.route import RouteSegment
+from python.weather import SegmentWeather
+from python.physics import critical_speed_ms, max_speed_from_discharge_limit
+from python.simulate import (
     RouteArrays, make_arrays,
     cumulative_energy_vec, cumulative_time_vec,
     energy_deltas_grad_vec,

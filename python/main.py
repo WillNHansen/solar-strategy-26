@@ -2,7 +2,7 @@
 Pre-race optimizer entry point.
 
 Usage:
-    python -m strategy.python.main --gpx route.gpx --start "2026-07-13 09:00" [--solcast-key KEY]
+    python -m python.main --gpx route.gpx --start "2026-07-13 09:00" [--solcast-key KEY]
 
 Without --solcast-key, synthetic weather is used (good for development).
 """
@@ -12,12 +12,12 @@ import argparse
 import json
 from datetime import datetime
 
-from strategy.python.params import VehicleParams, RaceParams
-from strategy.python.route import load_gpx, smooth_grade, total_distance_km
-from strategy.python.weather import fetch_solcast, synthetic_weather
-from strategy.python.optimize import run_optimizer
-from strategy.python.simulate import simulate
-from strategy.python.schedule import (
+from python.params import VehicleParams, RaceParams
+from python.route import load_gpx, smooth_grade, total_distance_km
+from python.weather import fetch_solcast, synthetic_weather
+from python.optimize import run_optimizer
+from python.simulate import simulate
+from python.schedule import (
     compute_arrival_times, find_day_boundaries, overnight_charge_Wh,
 )
 
@@ -40,6 +40,8 @@ def main() -> None:
     parser.add_argument("--verbose",     action="store_true")
     parser.add_argument("--output",      default=None,
                         help="Write result JSON to this path")
+    parser.add_argument("--plot",        default=None,
+                        help="Save a velocity + battery plot (PNG) to this path")
     args = parser.parse_args()
 
     # Treat --start as local race time (Darwin, UTC+9:30 for WSC).
@@ -150,6 +152,14 @@ def main() -> None:
         with open(args.output, "w") as f:
             json.dump(out, f, indent=2)
         print(f"\nResult written to {args.output}")
+
+    # ── Optional plot ─────────────────────────────────────────────────────────
+    # Imported lazily so matplotlib isn't required unless --plot is requested.
+    if args.plot:
+        from python.plot import plot_result
+        plot_result(segments, result, vehicle, race, args.plot,
+                    title="Optimized strategy", show_seed=True)
+        print(f"Plot written to {args.plot}")
 
 
 if __name__ == "__main__":

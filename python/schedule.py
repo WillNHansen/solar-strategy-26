@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from strategy.python.params import VehicleParams
-from strategy.python.route import RouteSegment
+from python.params import VehicleParams
+from python.route import RouteSegment
 
 # ASC 2026 tour hours (Reg 12.10.A.1, nominal).
 RACE_START_HOUR = 9    # 09:00 local
