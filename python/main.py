@@ -15,11 +15,11 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from params import VehicleParams, RaceParams, Checkpoint
-from route import load_gpx, smooth_grade, total_distance_km, RouteSegment
-from weather import fetch_solcast, synthetic_weather, SegmentWeather
-from optimize import run_optimizer
-from simulate import simulate
+from strategy.python.params import VehicleParams, RaceParams, Checkpoint
+from strategy.python.route import load_gpx, smooth_grade, total_distance_km, RouteSegment
+from strategy.python.weather import fetch_solcast, synthetic_weather, SegmentWeather
+from strategy.python.optimize import run_optimizer
+from strategy.python.simulate import simulate
 
 # ASC 2026 tour hours (Reg 12.10.A.1 — nominal; adjusted per-team based on stage start time)
 RACE_START_HOUR = 9    # 09:00 local

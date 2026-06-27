@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import requests
 
-from route import RouteSegment
+from strategy.python.route import RouteSegment
 
 
 @dataclass

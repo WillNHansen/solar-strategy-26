@@ -1,0 +1,15 @@
+# dotfiles
+**/.*
+!.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Results (generated outputs, not source)
+results/
+
+# GPX outputs (generated; real route files should be committed)
+gpx/flat_synthetic.gpx
+gpx/wsc_synthetic.gpx

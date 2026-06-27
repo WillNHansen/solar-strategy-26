@@ -8,9 +8,9 @@ from __future__ import annotations
 import math
 from scipy.optimize import brentq
 
-from params import VehicleParams
-from route import RouteSegment
-from weather import SegmentWeather
+from strategy.python.params import VehicleParams
+from strategy.python.route import RouteSegment
+from strategy.python.weather import SegmentWeather
 
 
 def headwind_ms(wind_speed: float, wind_dir_deg: float, road_heading_deg: float) -> float:

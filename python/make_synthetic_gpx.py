@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import math
+from pathlib import Path
 
 
 # Reference points along the Stuart Highway (lat, lon, elevation_m, cum_dist_km)
@@ -140,7 +141,7 @@ def write_gpx(points, path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output",     default="wsc_synthetic.gpx")
+    parser.add_argument("--output",     default=str(Path(__file__).resolve().parents[1] / "gpx" / "wsc_synthetic.gpx"))
     parser.add_argument("--n-points",   type=int, default=5000,
                         help="Number of GPX waypoints (default 5000 → ~500m spacing)")
     parser.add_argument("--noise",      type=float, default=15.0,

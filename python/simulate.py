@@ -18,10 +18,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
-from params import VehicleParams, RaceParams
-from route import RouteSegment
-from weather import SegmentWeather
-from physics import energy_delta_Wh
+from strategy.python.params import VehicleParams, RaceParams
+from strategy.python.route import RouteSegment
+from strategy.python.weather import SegmentWeather
+from strategy.python.physics import energy_delta_Wh
 
 
 # ── Precomputed route + weather arrays ────────────────────────────────────────

@@ -14,13 +14,14 @@ import json
 import math
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 
-from params import VehicleParams, RaceParams
-from route import load_gpx, smooth_grade, total_distance_km
-from weather import synthetic_weather
-from optimize import (
+from strategy.python.params import VehicleParams, RaceParams
+from strategy.python.route import load_gpx, smooth_grade, total_distance_km
+from strategy.python.weather import synthetic_weather
+from strategy.python.optimize import (
     run_multi_seed, make_constant_seed, _build_bounds, _seed_v_star,
 )
 
@@ -68,7 +69,7 @@ def main():
     parser.add_argument("--segment-m", type=float, default=5000.0)
     parser.add_argument("--n-seeds",   type=int,   default=10)
     parser.add_argument("--max-iter",  type=int,   default=2000)
-    parser.add_argument("--output",    default="multi_seed_results.json")
+    parser.add_argument("--output",    default=str(Path(__file__).resolve().parents[1] / "results" / "multi_seed_results.json"))
     args = parser.parse_args()
 
     race_start = datetime.fromisoformat(args.start)
