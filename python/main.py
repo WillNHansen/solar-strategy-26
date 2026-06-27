@@ -2,7 +2,7 @@
 Pre-race optimizer entry point.
 
 Usage:
-    python main.py --gpx route.gpx --start "2025-10-13 08:00" [--solcast-key KEY]
+    python -m strategy.python.main --gpx route.gpx --start "2026-07-13 09:00" [--solcast-key KEY]
 
 Without --solcast-key, synthetic weather is used (good for development).
 """
@@ -10,103 +10,23 @@ Without --solcast-key, synthetic weather is used (good for development).
 from __future__ import annotations
 import argparse
 import json
-import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
-import numpy as np
-
-from strategy.python.params import VehicleParams, RaceParams, Checkpoint
-from strategy.python.route import load_gpx, smooth_grade, total_distance_km, RouteSegment
-from strategy.python.weather import fetch_solcast, synthetic_weather, SegmentWeather
+from strategy.python.params import VehicleParams, RaceParams
+from strategy.python.route import load_gpx, smooth_grade, total_distance_km
+from strategy.python.weather import fetch_solcast, synthetic_weather
 from strategy.python.optimize import run_optimizer
 from strategy.python.simulate import simulate
-
-# ASC 2026 tour hours (Reg 12.10.A.1 — nominal; adjusted per-team based on stage start time)
-RACE_START_HOUR = 9    # 09:00 local
-RACE_STOP_HOUR  = 18   # 18:00 local
-UTC_OFFSET_H    = 0.0  # set per-race; ASC route crosses multiple US time zones
-
-
-def _compute_arrival_times(
-    segments: list[RouteSegment],
-    race_start: datetime,
-    v_estimate: float,
-    race_start_hour: float = RACE_START_HOUR,
-    race_stop_hour: float  = RACE_STOP_HOUR,
-) -> list[datetime]:
-    """
-    Estimated arrival time at each segment, accounting for overnight stops.
-
-    When the estimated arrival crosses race_stop_hour, the clock jumps to
-    race_start_hour the following morning before continuing. This correctly
-    models a multi-day race where the car parks each evening.
-    """
-    arrivals = []
-    current  = race_start
-
-    for seg in segments:
-        hour = current.hour + current.minute / 60.0
-        if hour >= race_stop_hour:
-            current = (current + timedelta(days=1)).replace(
-                hour=int(race_start_hour), minute=0, second=0, microsecond=0
-            )
-        arrivals.append(current)
-        current = current + timedelta(seconds=seg.distance_m / v_estimate)
-
-    return arrivals
-
-
-def _overnight_charge_Wh(
-    vehicle: VehicleParams,
-    peak_ghi: float = 900.0,
-    impound_start_h: float = 20.0,
-    impound_end_h: float   = 7.0,
-    race_restart_h: float  = RACE_START_HOUR,
-    end_of_day_h: float    = RACE_STOP_HOUR,
-) -> float:
-    """
-    Estimate solar energy (Wh) collected at an overnight stop during non-impound hours.
-
-    ASC 2026 impound: 20:00–07:00 (Reg 12.17.B.1).
-    Charging windows: end-of-day (18:00) → impound (20:00), plus impound-end (07:00) → race restart (09:00).
-    Uses the same synthetic sin-curve GHI model as synthetic_weather().
-    """
-    def ghi_at_hour(h: float) -> float:
-        hour_frac = h / 24.0
-        if 0.25 <= hour_frac <= 0.75:
-            return peak_ghi * math.sin(math.pi * (hour_frac - 0.25) / 0.5)
-        return 0.0
-
-    def integrate_ghi(t_start: float, t_end: float, n: int = 60) -> float:
-        """Trapezoid integration of GHI over a time window (hours), returns Wh/m²."""
-        dt = (t_end - t_start) / n
-        total = sum(ghi_at_hour(t_start + k * dt) for k in range(n + 1))
-        total -= 0.5 * (ghi_at_hour(t_start) + ghi_at_hour(t_end))  # trapezoid correction
-        return total * dt
-
-    Wh_per_m2  = integrate_ghi(end_of_day_h, impound_start_h)   # evening window
-    Wh_per_m2 += integrate_ghi(impound_end_h, race_restart_h)   # morning window
-
-    return Wh_per_m2 * vehicle.Ai * vehicle.eta_s * (vehicle.eta_b ** 0.5)
-
-
-def _find_day_boundaries(arrivals: list[datetime]) -> list[int]:
-    """
-    Return the index of the last segment driven on each day (except the final day).
-    Used to place overnight SoC minimum constraints.
-    """
-    boundaries = []
-    for i in range(len(arrivals) - 1):
-        if arrivals[i + 1].date() != arrivals[i].date():
-            boundaries.append(i)
-    return boundaries
+from strategy.python.schedule import (
+    compute_arrival_times, find_day_boundaries, overnight_charge_Wh,
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SSCP pre-race velocity optimizer")
     parser.add_argument("--gpx",         required=True,  help="Path to route GPX file")
     parser.add_argument("--start",       required=True,
-                        help="Race start datetime (UTC), e.g. '2025-10-13 08:00'")
+                        help="Race start datetime (local), e.g. '2026-07-13 09:00'")
     parser.add_argument("--solcast-key", default=None,
                         help="Solcast API key (omit for synthetic weather)")
     parser.add_argument("--segment-m",   type=float, default=2000.0,
@@ -137,31 +57,26 @@ def main() -> None:
     vehicle = VehicleParams()
 
     # ── Compute multi-day arrival times ──────────────────────────────────────
-    # Arrival times must be known before the optimizer runs so that weather()
-    # assigns the correct local hour (GHI) to each segment, and so we can
-    # locate the overnight SoC constraint at the right segment index.
-    #
-    # Chicken-and-egg: arrivals depend on the speed profile we're about to
-    # optimize. We break the cycle with a constant-speed estimate — a 20%
-    # error shifts a day boundary by ~10–20 segments (~100 km), which is
-    # acceptable imprecision for constraint placement.
-    initial_speed  = 22.0  # m/s — rough seed; only affects day-boundary placement
-    arrivals       = _compute_arrival_times(segments, race_start, initial_speed)
-    day_boundaries = _find_day_boundaries(arrivals)
+    # Arrivals must be known before optimizing so weather() assigns the correct
+    # local hour (GHI) per segment and overnight constraints land on the right
+    # segment. Estimated from a constant speed (see compute_arrival_times).
+    initial_speed  = 22.0  # m/s — only affects day-boundary placement
+    arrivals       = compute_arrival_times(segments, race_start, initial_speed)
+    day_boundaries = find_day_boundaries(arrivals)
     n_days = len(day_boundaries) + 1
     print(f"  {n_days} race days, day-end boundaries at segments: {day_boundaries}")
 
     # ── Weather ───────────────────────────────────────────────────────────────
     if args.solcast_key:
         print("Fetching Solcast weather forecasts...")
-        weather = fetch_solcast(segments, race_start, initial_speed, args.solcast_key)
+        weather = fetch_solcast(segments, race_start, initial_speed,
+                                args.solcast_key, arrival_times=arrivals)
     else:
         print("Using synthetic weather (no Solcast key provided)")
-        # Pass pre-computed arrivals so GHI reflects the correct local time per day
         weather = synthetic_weather(segments, race_start, initial_speed,
                                     arrival_times=arrivals)
 
-    charge_per_night = _overnight_charge_Wh(vehicle)
+    charge_per_night = overnight_charge_Wh(vehicle)
     print(f"  Overnight solar charge: {charge_per_night:.0f} Wh per stop")
 
     race = RaceParams(

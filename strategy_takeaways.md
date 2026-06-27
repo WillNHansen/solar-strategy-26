@@ -5,7 +5,45 @@ See [research_notes.md](research_notes.md) for the underlying literature.
 
 ---
 
-## 1. Model Selection
+## 1. Literature Motivation
+
+### 1.1 Why a simulation-based optimizer, not an analytical solution
+
+The Pudney & Howlett line (University of South Australia, 1990s–2000s) proves closed-form results about optimal driving modes: constant speed is optimal on flat roads with a simple battery, and a "critical speed" strategy (two alternating speeds) is optimal on undulating roads once battery nonlinearity is accounted for. These results are elegant and exactly correct within their assumptions.
+
+We didn't follow this line because our model violates its key assumptions:
+- **Grade sensitivity:** the motor is highly sensitive to slope (flagged in 1994 SSCP notes; confirmed by the WaveSculptor datasheet). Pudney's proofs assume grade effects are separable. In practice, a steep climb at v* is very different from flat driving at v*.
+- **Weather variability:** real-race solar input **changes hour-to-hour.** Pudney's steady-state model fixes GHI; ours varies it per segment.
+- **Crosswind drag:** `CdA(β)` varies with yaw angle, which changes continuously along a real route. Not representable in the analytical framework.
+
+The Michigan (Betancur/Yesil) line takes the alternative approach: build a detailed simulation and run a numerical optimizer over it. Michigan ran multiple simulations in parallel with different weather inputs mid-race and used the spread to judge forecast uncertainty. This is the practical approach for real racing — re-runnable in minutes when conditions change, and naturally handles all the nonlinearities.
+
+**Our choice:** simulate each segment with the full drivetrain equation (Betancur §4.3), then minimize total time with SLSQP (gradient-based, fast) or DP (global, exact). Same philosophy as Michigan; different optimizer.
+
+### 1.2 Why SLSQP as the primary optimizer
+
+SLSQP is the gradient-based workhorse: ~7 seconds to converge on a 3000-segment route. This matters for live race use — re-running the optimizer mid-race after a cloud update needs to complete before the car has driven past the relevant segment.
+
+**Literature validation:** Betancur et al. compare GA, BB-BC (Big-Bang Big-Crunch), and exhaustive search on the same model. Exhaustive search won but is impractical live; BB-BC was fastest with comparable results. We use SLSQP instead, which is faster still for smooth differentiable objectives and is well-validated in the scipy stack.
+
+### 1.3 Why these specific model terms
+
+| Term | Literature source | Rationale |
+|---|---|---|
+| Drivetrain: v³ aero + linear rolling | Betancur Eq. 1; confirmed by Pudney | Dominant power consumption terms. Rolling resistance linear; aero cubic — small speed increases are expensive. |
+| `Ps = Ii·Ai·ηs·sin(φ)` | Betancur solar sub-model | Standard flat-panel model. GHI from Solcast replaces the irradiance model Betancur uses internally. |
+| `ηb` round-trip efficiency | Betancur | Simple and well-validated; battery quadratic loss is small relative to drivetrain at cruise. |
+| `I(b)` quadratic battery curve | Pudney | Captures voltage sag near discharge limit; relevant near Eb_min where the optimizer presses hardest. |
+| Per-segment speed vector | Michigan / Betancur / Pudney all use it | Flexible: captures speed limit changes, grade variation, overnight stops at segment boundaries. |
+| Overnight SoC constraint | Novel application | Not explicit in any paper (single-day races); natural extension — battery floor at end of each race day. |
+
+### 1.4 What the literature does not cover (gaps we have to fill)
+
+- **Multi-day race structure** — all reviewed papers model single-day or continuous races. ASC's 9 am–6 pm tour-day structure with overnight charging is an SSCP addition.
+- **Live telemetry integration** — Michigan describes the workflow (chase car strategists re-running simulations) but not the software architecture. Our UDP-based live input loop is original.
+---
+
+## 2. Model Selection
 
 **Well-sourced from literature (Betancur, Pudney):**
 - All terms in the drivetrain equation
@@ -31,56 +69,56 @@ See [research_notes.md](research_notes.md) for the underlying literature.
 
 ---
 
-## 2. Existing Strategy Code
+## 3. Existing Strategy Code
 
-### 2.1 Battery SoC — yes, but primitive
+### 3.1 Battery SoC — yes, but primitive
 
 - [`motherboard/src/bms/state.rs`](sunstruck_onboard_rust_impl/motherboard/src/bms/state.rs): SoC is a simple linear interpolation of minimum cell voltage (2.5 V → 0%, 4.2 V → 100%). No coulomb counting, no model-based estimation.
 - [`motherboard/src/bms/sensors/current.rs`](sunstruck_onboard_rust_impl/motherboard/src/bms/sensors/current.rs): Energy (Wh) and charge (Ah) are integrated at 100 Hz from a current shunt. These accumulators exist and are broadcast over telemetry — this is coulomb counting data, it's just not being fed back into the SoC estimate.
 
-### 2.2 Motor power / speed control — yes, but no grade sensitivity or efficiency map
+### 3.2 Motor power / speed control — yes, but no grade sensitivity or efficiency map
 
 - [`motherboard/src/vehicle/drive.rs`](sunstruck_onboard_rust_impl/motherboard/src/vehicle/drive.rs): Generates motor drive commands. Three cruise modes: constant RPM, constant bus current, off. Currently no PID — cruise is constant-speed + 100% torque. **Known open issue.**
 - Motor messages (`messages/src/motor/mod.rs`) use Tritium WaveSculptor protocol: velocity setpoint in RPM, current as a fraction 0.0–1.0. No efficiency map or grade-aware power estimation anywhere in the codebase.
 
-### 2.3 Solar array telemetry — logged, not modeled
+### 3.3 Solar array telemetry — logged, not modeled
 
 - MPPT messages (`messages/src/mppt/mod.rs`): 6 channels (3 units × 2 ch), each reports array voltage, array current, battery voltage, and temperature. All data is broadcast over CAN and logged. No irradiance model, no power forecasting.
 
-### 2.4 GPS + elevation — tool exists, not integrated
+### 3.4 GPS + elevation — tool exists, not integrated
 
 - [`offboard/elevationProfiler/ElevationProfiler.go`](sunstruck-code/offboard/elevationProfiler/ElevationProfiler.go): A standalone Go tool that loads SRTM3 topographic tiles and processes a CSV route to produce an elevation profile. A KML→CSV converter is also included. This is exactly the Michigan pre-race route survey workflow — but the output is not connected to anything in the vehicle firmware or any optimizer.
 - Live GPS (NEO-F9P / ZED-F9P with RTK corrections from EarthScope P221) is implemented in firmware and outputs `GpsPosition`, `GpsStatus`, `GpsTime` messages. **Known issue: the GNSS receiver may have a hardware problem as of June 2026.**
 
-### 2.5 Telemetry logging — robust
+### 3.5 Telemetry logging — robust
 
 - [`motherboard/src/comms/mod.rs`](sunstruck_onboard_rust_impl/motherboard/src/comms/mod.rs): UDP broadcast every 100 ms to off-site proxy. All live data (voltage, current, MPPT, GPS, SoC, Wh, Ah, motor commands) is on the wire.
 - [`motherboard/src/sd.rs`](sunstruck_onboard_rust_impl/motherboard/src/sd.rs): SD card circular log at 100 ms cadence. 59 CAN message slots + per-cell voltage + per-cell temperature arrays per record. Capacity ~18 days at 100 ms intervals. This is the raw material for any strategy model.
 - [`offboard/telem/`](sunstruck-code/offboard/telem/): Python tools to receive telemetry UDP, write to InfluxDB + CSV, and replay from log files.
 
-### 2.6 Max's model — prior SSCP optimizer (last race)
+### 3.6 Max's model — prior SSCP optimizer (last race)
 
-MATLAB-based car model used at the most recent race. Direct predecessor to `strategy/optimize.py`. Find this before re-deriving physics from scratch — see research_notes.md §8.1.
+MATLAB-based car model used at the most recent race. Direct predecessor to `strategy/optimize.py`; see research_notes.md §2.5.
 
 ---
 
-## 3. Strategy Gap Summary
+## 4. Strategy Gap Summary
 
-### 3.1 Pre-race / offline inputs
+### 4.1 Pre-race / offline inputs
 
 | Capability | Status |
 |---|---|
 | Route elevation profile | **Have it** — GPX + SRTM3 tool in repo. Needs smoothing. |
 | Speed limits along route | **Partial** — not in GPX; pull from OpenStreetMap or mark manually |
-| CdA | **Have it** — from aero model. Combine with Solcast wind + GPX heading for per-segment crosswind drag. |
+| CdA | **Can get it** — from aero model. Combine with Solcast wind + GPX heading for per-segment crosswind drag. |
 | Crr | **Unknown** — needs rolldown test. Literature estimate ~0.002–0.004. |
 | Vehicle mass | **Unknown** — weigh with driver + full pack |
 | Battery model I(b, T, SoC) | **Have raw data** — telemetry (V×I, pack temp, Ah) + cell cycler logs. Needs MCP3913 calibration fix first. |
 | Motor / regen efficiency | **Unknown** — source from WaveSculptor datasheet or bench test |
 | Solar / wind / cloud forecast | **Have it** — Solcast API (GHI, cloud opacity, 10m wind). Confirm access tier fields. |
-| Optimizer (velocity profile) | **Implemented** — SLSQP + DP in `strategy/` |
+| Cell balancing | **Currently not implemented** in Rust firmware |
 
-### 3.2 Live inputs (chase car, updated continuously during race)
+### 4.2 Live inputs (chase car, updated continuously during race)
 
 | Capability | Status |
 |---|---|
@@ -93,14 +131,8 @@ MATLAB-based car model used at the most recent race. Direct predecessor to `stra
 | Short-horizon cloud forecast | **Have it** — Solcast queried live on ~30 min horizon gives cloud opacity ahead on route |
 | Chase car internet connectivity | **Hypothetical** — Starlink discussed as an option; would enable live Solcast queries and telemetry sync |
 
-### 3.3 On-car control
 
-| Capability | Status |
-|---|---|
-| Cruise control PID | **Known open issue** — prerequisite for any speed-hold strategy to be driveable |
-| Cell balancing | **Not implemented** in Rust firmware |
-
-### 3.4 Key telemetry wire units
+### 4.4 Key telemetry wire units
 
 | Quantity | Wire unit | Notes |
 |---|---|---|
@@ -114,7 +146,7 @@ MATLAB-based car model used at the most recent race. Direct predecessor to `stra
 | Array current | 0.001 A (u16) | Per MPPT channel |
 | GPS lat/lon | degrees (f32) | WGS84, RTK available |
 
-### 3.5 Vehicle parameter status
+### 4.5 Vehicle parameter status
 
 All placeholders until measured. High-impact parameters will shift optimizer output significantly.
 
@@ -131,17 +163,9 @@ All placeholders until measured. High-impact parameters will shift optimizer out
 | `η_regen` | 0.65 | Low–medium | WaveSculptor or descent test |
 | `I_discharge_max` | 150 A | Low at cruise | BMS config |
 
-### 3.6 What this means for building a strategy tool
-
-The codebase gives excellent **sensor coverage** — live Wh/Ah integration, per-cell voltages, MPPT V/I per channel, GPS position, and motor commands all streaming over UDP at 100 ms. The elevation profiler and KML tools are ready for pre-race route prep.
-
-What's entirely missing is the **model layer**: no drivetrain physics (the Betancur equation), no solar power model, and no optimizer on top of them. The strategy tool would most naturally be a **standalone offboard process** (Python) that reads live telemetry from the UDP stream, runs a simulation + optimization loop, and pushes a recommended speed to the chase car display.
-
-The cruise-control PID fix is a prerequisite: the car needs to hold a commanded speed reliably before strategy suggestions mean anything to the driver.
-
 ---
 
-## 4. Optimizer Constraints
+## 5. Optimizer Constraints
 
 The optimizer minimizes `Σ d_i / v_i` (total race time) subject to these constraints.
 
@@ -158,7 +182,7 @@ The optimizer minimizes `Σ d_i / v_i` (total race time) subject to these constr
 | Daily overnight SoC | `Eb_end_of_day_k ≥ Eb_overnight_min` | ✅ Active — 500 Wh floor per overnight stop | |
 | Regen ceiling clip on descents | `Eb_i ≤ Eb_max` when `Pm_i < 0` | ❌ Not enforced as a constraint | Regen efficiency modeled (η_regen = 0.65, placeholder) but no constraint prevents overcharge on steep descents; irrelevant on flat synthetic route |
 
-### 4.1 Race rules — ASC 2026 (confirmed from Regs Rev C, May 2026)
+### 5.1 Race rules — ASC 2026 (confirmed from Regs Rev C, May 2026)
 
 | Rule | Value | Source |
 |---|---|---|
@@ -182,9 +206,9 @@ The optimizer minimizes `Σ d_i / v_i` (total race time) subject to these constr
 
 ---
 
-## 5. Known Optimizer Limitations
+## 6. Known Optimizer Limitations
 
-### 5.1 SLSQP is a local optimizer — morning sprint problem
+### 6.1 SLSQP is a local optimizer — morning sprint problem
 
 On days where the battery starts full (or near-full), the true optimal strategy is to **sprint hard in the morning** to drain below Eb_max quickly, freeing headroom to capture solar through midday, then sprint again in the late afternoon to drain to the overnight floor. This produces a "W"-shaped battery curve.
 
@@ -209,7 +233,7 @@ To distinguish these, the next step is a **targeted morning sprint seed**: v_max
 
 ---
 
-## 6. Open Questions / To Investigate
+## 7. Open Questions / To Investigate
 
 **Testing (critical path):**
 - Fix MCP3913 calibration on BMS 2–5 boards before collecting battery model fit data.

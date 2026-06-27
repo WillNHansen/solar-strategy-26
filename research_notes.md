@@ -17,7 +17,9 @@ Utilize benchmarks/records from the past (or test/derive your own) to identify t
 
 ---
 
-## 2. Conventional Wisdom
+## 2. General Notes
+
+### 2.1 Conventional Wisdom
 Two common strategies:
 1. Match a constant, optimal speed
 2. Match a desired battery SoC
@@ -26,24 +28,18 @@ SoC should matter for long-term race strategy; maintaining a constant speed is a
 
 Power production and power consumption are the two sides of the equation. Over the course of the race, we want to consume all of the power produced to the maximum.
 
----
-
-## 3. Notes from '94
+### 2.2 Notes from '94
 - It is also a task to determine good drag values to use
 - Battery performance does vary as well
 - Motors are very sensitive to % grade; there is some algorithm in telemetry that evaluates power consumption
 
----
-
-## 4. Strategy Considerations
+### 2.3 Strategy Considerations
 - **Cloud cover approach:** speed up when there is some cloud cover to reach a sunny area. A judgement call — depends how wide the cloud cover is and the cloud/car relative velocity. Maybe too complex to put in a model.
 - **Hill strategies:** accelerate uphill quickly? Needs more research into motor heat/torque/velocity.
 - **Regen vs. frictional braking:** there may be select racing scenarios only where regen makes sense.
 - Suggestion of a bracketed race analysis providing best- and worst-case scenarios.
 
----
-
-## 5. Luminos Strategy Notes
+### 2.4 Luminos Strategy Notes
 
 From the 2012–2013 SSCP wiki pages on Luminos (Stanford's prior competitive solar car):
 
@@ -51,13 +47,30 @@ From the 2012–2013 SSCP wiki pages on Luminos (Stanford's prior competitive so
 
 **SoC modeling:** Luminos used a complementary filter to identify battery SoC — likely a blend of voltage-based estimation and Ah integration. The wiki notes this is "probably important down the line, or has been done already in telemetry." SSCP's current firmware integrates Ah at 100 Hz (coulomb counting) but doesn't feed it back into the SoC estimate (still linear in min cell voltage).
 
-**Strategy planning insight:** Constant speed is not optimal. Losses vary at different velocities and conditions; the road is not perfectly flat; the motor is highly sensitive to grade. The Luminos wiki pointed to the Pudney (Adelaide) and Betancur papers as the references to explore — both are now in §7.
+**Strategy planning insight:** Constant speed is not optimal. Losses vary at different velocities and conditions; the road is not perfectly flat; the motor is highly sensitive to grade. The Luminos wiki pointed to the Pudney (Adelaide) and Betancur papers as the references to explore — both are now in §4.
 
 **Competitive positioning:** SSCP should plan to "race our own race" — don't expect to be competitive with WSC-class vehicles running 6 m² panels. The strategy model and optimization are still valuable for maximizing our own performance within our class.
 
+### 2.5 7/21/2025 Strategy Sketch — Key Notes
+
+**Max's model:** The race strategy at SSCP's last race was executed using "Max's model" — a MATLAB-based car model with a "Do math" button that pulled fresh weather data on demand. This is the direct predecessor to what we're building now. The model and any documentation should be tracked down before too much is re-derived from scratch.
+
+**Technology upgrades available now vs. then:**
+- Solcast replaces manual weather data pulls — this is the "Do math" button done properly
+- Starlink on the chase car enables live weather/telemetry sync that wasn't feasible before (partnership available)
+- A Python app replaces the MATLAB dependency — lower barrier, faster iteration
+
+**Two team outputs for this cycle:**
+1. **Car model** — accuracy to real-world performance is the success metric. Requires testing: comms driving in the local area, Central Valley, eventually an ASC-style mock race day.
+2. **Aero coordination** — strategy team feeds drag/efficiency constraints to the aero subteam for the new aerobody design.
+
+**Design/build timeline:** WSC regs expected ~June 2026. No molds before then. This year = design. Next year = build. Systems should be developed in parallel; whoever finishes a subsystem first sets constraints for others — needs coordination. Workspace access is a gating factor.
+
+**Cross-subteam communication:** Strategists need to understand CFD; mech needs to consider electrical/battery. Open dialogue via #general is critical so design decisions don't blindside other subteams.
+
 ---
 
-## 6. Literature Synthesis: The Two Schools of Thought
+## 3. Literature Synthesis: The Two Schools of Thought
 All solar car strategy research falls into two camps:
 
 **1. Mathematical / Optimal Control (Pudney, Howlett line)**
@@ -75,24 +88,9 @@ All solar car strategy research falls into two camps:
 
 ---
 
-## 6. Physics Reference: Drivetrain Power Equation
+## 4. Paper Notes
 
-From Betancur et al. Equation (1) — the fundamental equation governing what speed you can maintain:
-```
-Pm = v * [m*a + (1/2)*CdA*ρ*(v - vw)^2 + Crr*m*g + m*g*sin(θ)]
-```
-At constant speed on flat road with no wind (a=0, θ=0, vw=0), this simplifies to:
-```
-Pm = v * [(1/2)*CdA*v^2 + Crr*m*g]
-   = (1/2)*CdA*ρ*v^3 + Crr*m*g*v
-```
-The v³ aerodynamic drag term is why power consumption is so nonlinear with speed, and why small speed reductions can save significant power on a flat road. Rolling resistance is the other term (linear in v). Both matter for SSCP's power sensitivity analysis.
-
----
-
-## 7. Paper Notes
-
-### 7.1 "Follow the Sun: GNSS and the Great Solar Car Race" — InsideGNSS, Sep/Oct 2008
+### 4.1 "Follow the Sun: GNSS and the Great Solar Car Race" — InsideGNSS, Sep/Oct 2008
 
 **Full text available:** https://insidegnss.com/auto/sepoct08-solarcar.pdf
 
@@ -144,7 +142,7 @@ The v³ aerodynamic drag term is why power consumption is so nonlinear with spee
 
 ---
 
-### 7.2 "Winning Solar Races with Interface Design" — Hilliard & Jamieson, *Ergonomics in Design*, 2008
+### 4.2 "Winning Solar Races with Interface Design" — Hilliard & Jamieson, *Ergonomics in Design*, 2008
 
 **Full text:** https://journals.sagepub.com/doi/pdf/10.1518/106480407X312374 (paywalled; access via Stanford Library). DOI: 10.1518/106480407X312374
 
@@ -156,7 +154,7 @@ The v³ aerodynamic drag term is why power consumption is so nonlinear with spee
 
 ---
 
-#### 7.2.1 Analysis Framework
+#### 4.2.1 Analysis Framework
 
 Work Domain Analysis (WDA) divided the system into three areas:
 
@@ -172,7 +170,7 @@ The analysis also flagged data gaps — they recommended adding **3-axis acceler
 
 ---
 
-#### 7.2.2 Four Display Views
+#### 4.2.2 Four Display Views
 
 **1. Maintenance view** — voltages, currents, temperatures at generalized/physical function level.
 
@@ -187,7 +185,7 @@ The key design insight of the paper. Racecourse distance on horizontal axis (fix
 
 ---
 
-#### 7.2.3 Key Findings and Quotes
+#### 4.2.3 Key Findings and Quotes
 
 - "Exactly when and where a developing storm will cross the racecourse, and what actions the driver should take must be estimated and frequently reevaluated."
 - Active contextual advice systems (even simple ones) have been shown to reduce fuel consumption in conventional vehicles by **14%**.
@@ -196,7 +194,7 @@ The key design insight of the paper. Racecourse distance on horizontal axis (fix
 
 ---
 
-#### 7.2.4 Relevance for SSCP
+#### 4.2.4 Relevance for SSCP
 
 The **time-distance space** is the most directly applicable concept. For our chase car display: route distance on x-axis, time of day on y-axis, planned speed profile integrated to show trajectory. Cloud cover (from a forecast API) mapped onto the same space. This makes the Michigan "speed up under clouds" heuristic into something the strategist can see directly rather than reason about abstractly.
 
@@ -208,21 +206,21 @@ Key quote on representation aiding: *"Task performance can be improved by using 
 
 ---
 
-### 7.3 "Heuristic Optimization for the Energy Management and Race Strategy of a Solar Car" — Betancur, Osorio-Gómez & Rivera, *Sustainability*, 2017
+### 4.3 "Heuristic Optimization for the Energy Management and Race Strategy of a Solar Car" — Betancur, Osorio-Gómez & Rivera, *Sustainability*, 2017
 
 **Full text open-access:** https://www.mdpi.com/2071-1050/9/10/1576/pdf — also on ResearchGate: https://www.researchgate.net/publication/320049866_Heuristic_Optimization_for_the_Energy_Management_and_Race_Strategy_of_a_Solar_Car
 
-**Subject:** Racing strategy for the EPM-EAFIT solar car at the World Solar Challenge 2015 (Darwin → Adelaide, 3022 km).
+**Subject:** Racing strategy for the EPM-EAFIT solar car at the World Solar Challenge 2015 (Darwin → Adelaide, 3022 km). Source of the drivetrain power equation (Eq. 1) the optimizer is built on — see §4.3.1.
 
 ---
 
-#### 7.3.1 The Race Model
+#### 4.3.1 The Race Model
 
 Four coupled sub-models. This is the canonical architecture:
 
 **Drivetrain (energy consumption)**
 
-Instantaneous wheel power:
+Instantaneous wheel power (Eq. 1) — the fundamental equation governing what speed you can hold:
 ```
 Pm = v * [m*a + (1/2)*CdA*ρ*(v - vw)^2 + Crr*m*g + m*g*sin(θ)]
 ```
@@ -236,6 +234,8 @@ Where:
 - `Crr` = tyre roll coefficient
 - `g` = gravity
 - `θ` = road slope
+
+At constant speed on a flat road with no wind (a=0, θ=0, vw=0) this reduces to `Pm = ½·CdA·ρ·v³ + Crr·m·g·v`. The v³ aero term is why power is so nonlinear in speed; rolling resistance is only linear. Both drive SSCP's power sensitivity analysis.
 
 For constant-slope, constant-speed sections, consumed energy per segment:
 ```
@@ -279,7 +279,7 @@ Where `I0` = extraterrestrial solar radiation, `τa` = atmospheric extinction co
 
 ---
 
-#### 7.3.2 Optimization Methods Compared
+#### 4.3.2 Optimization Methods Compared
 
 **Exhaustive Search (ES)** — brute force; feasible only for 1D, 2D, 3D velocity vectors.
 
@@ -298,7 +298,7 @@ All run at 720 candidates, 50 iterations. One race simulation = 4–6 ms. Full o
 
 ---
 
-#### 7.3.3 Results
+#### 4.3.3 Results
 
 **Clear sky case:**
 
@@ -334,7 +334,7 @@ All run at 720 candidates, 50 iterations. One race simulation = 4–6 ms. Full o
 
 ---
 
-### 7.4 Pudney & Howlett — Mathematical Optimization Line (University of South Australia)
+### 4.4 Pudney & Howlett — Mathematical Optimization Line (University of South Australia)
 
 **Paper progression:**
 
@@ -355,7 +355,7 @@ All run at 720 candidates, 50 iterations. One race simulation = 4–6 ms. Full o
 
 ---
 
-#### 7.4.1 Pudney & Howlett (2002) — Detailed Notes
+#### 4.4.1 Pudney & Howlett (2002) — Detailed Notes
 
 **Context:** Used to derive strategy for the *Aurora 101*, winner of the 1999 World Solar Challenge (Darwin → Adelaide, 3000 km). The Aurora team used the University of South Australia's Scheduling and Control Group for strategy. The daily solar radiation was estimated with a Markov model; the driving strategy described in this paper was used in the short-term.
 
@@ -472,7 +472,7 @@ SSCP's model is `I(b, T, SoC)` — a richer version of Pudney's single curve, en
 
 ---
 
-### 7.5 Supplementary: Other Referenced Works (from Betancur et al. reference list)
+### 4.5 Supplementary: Other Referenced Works (from Betancur et al. reference list)
 
 **Shimizu et al. (1998)** — Honda Dream solar car strategy (WSC 1990, 1993, 1996). Divided strategy into three topics: supervision support system, cruising simulation program, and power/speed optimizing control algorithm. First published strategy system for a competitive solar car team.
 
@@ -484,7 +484,7 @@ SSCP's model is `I(b, T, SoC)` — a richer version of Pudney's single curve, en
 
 ---
 
-### 7.6 "Race Simulation and Energy Management System for a Solar Car" — ELECO 2025
+### 4.6 "Race Simulation and Energy Management System for a Solar Car" — ELECO 2025
 
 **Full text available:** https://www.eleco.org.tr/ELECO2025/Eleco2025-Papers/174.pdf
 
@@ -503,7 +503,7 @@ The model replaces a constant ηm with a 2D lookup table: `(torque, RPM) → eff
 
 ---
 
-### 7.7 Open-Source Strategy Code: Midnight Sun (U. Waterloo)
+### 4.7 Open-Source Strategy Code: Midnight Sun (U. Waterloo)
 
 **GitHub:** https://github.com/uw-midsun/strategy_msxvi (ASC/FSGP 2024–2025, most recent) and https://github.com/uw-midsun/strategy_xv (prior iteration)
 
@@ -553,7 +553,7 @@ SLSQP is faster per run and fine when you have a good initial guess (e.g. seed w
 
 ---
 
-### 7.8 Reference Data: CdA and Crr for WSC-Class Cars — Scientific Gems Blog
+### 4.8 Reference Data: CdA and Crr for WSC-Class Cars — Scientific Gems Blog
 
 **URL:** https://scientificgems.wordpress.com/2023/11/11/solar-cars-rolling-resistance-drag/ and https://scientificgems.wordpress.com/2022/02/18/solar-racing-basics-revisited/
 
@@ -578,7 +578,7 @@ SLSQP is faster per run and fine when you have a good initial guess (e.g. seed w
 
 ---
 
-### 7.9 pvlib-python — Solar Position and Irradiance Library
+### 4.9 pvlib-python — Solar Position and Irradiance Library
 
 **GitHub / Docs:** https://pvlib-python.readthedocs.io
 
@@ -604,32 +604,13 @@ SLSQP is faster per run and fine when you have a good initial guess (e.g. seed w
 
 ---
 
-## 8. Access Notes + Internal Resources
+## 5. Access Notes + Internal Resources
 
 - **SSCP Google Sites wiki** (all strategy subpages): behind Google account auth wall — need to be logged in as a Stanford Solar Car team member to access
-- **SSCP Google Doc** (7/21/2025 strategy sketches): https://docs.google.com/document/d/1O_CNMQn5NZTiBuV36BSLR_ElW1Zb2zPzpPlOI8Hi-v4/edit (behind auth wall). Key content captured below (§8.1).
+- **SSCP Google Doc** (7/21/2025 strategy sketches): https://docs.google.com/document/d/1O_CNMQn5NZTiBuV36BSLR_ElW1Zb2zPzpPlOI8Hi-v4/edit (behind auth wall). Key content captured in §2.5.
 - **West rolldown analysis** (Google Doc): https://docs.google.com/document/d/1CzS0pgpmk_cq5IV7uU9NpsL39HTybiMnpHxVLeeAybQ/edit#heading=h.8c584gltcwv3 — prior power sensitivity work and rolldown data. Key input for Crr and CdA calibration.
 - **Arctan test driving data (2014–2015)**: https://sites.google.com/stanfordsolarcar.com/sscp/home/sscp-2014-2015/strategy-2014-2015/arctan-test-driving-data-and-analysis (behind auth wall). Controlled speed runs → power-to-drive curves (roughly cubic fit), battery voltage and SoC estimation.
 - **Google Drive folder** (test procedures and papers): https://drive.google.com/drive/u/0/folders/13Mx0kvlZaGFw-UIYkyE6C9jmjgD845kb — includes Betancur paper and likely other references.
-### 8.1 7/21/2025 Strategy Sketch — Key Notes
-
-**Max's model:** The race strategy at SSCP's last race was executed using "Max's model" — a MATLAB-based car model with a "Do math" button that pulled fresh weather data on demand. This is the direct predecessor to what we're building now. The model and any documentation should be tracked down before too much is re-derived from scratch.
-
-**Technology upgrades available now vs. then:**
-- Solcast replaces manual weather data pulls — this is the "Do math" button done properly
-- Starlink on the chase car enables live weather/telemetry sync that wasn't feasible before (partnership available)
-- A Python app replaces the MATLAB dependency — lower barrier, faster iteration
-
-**Two team outputs for this cycle:**
-1. **Car model** — accuracy to real-world performance is the success metric. Requires testing: comms driving in the local area, Central Valley, eventually an ASC-style mock race day.
-2. **Aero coordination** — strategy team feeds drag/efficiency constraints to the aero subteam for the new aerobody design.
-
-**Design/build timeline:** WSC regs expected ~June 2026. No molds before then. This year = design. Next year = build. Systems should be developed in parallel; whoever finishes a subsystem first sets constraints for others — needs coordination. Workspace access is a gating factor.
-
-**Cross-subteam communication:** Strategists need to understand CFD; mech needs to consider electrical/battery. Open dialogue via #general is critical so design decisions don't blindside other subteams.
-
----
-
 - **Sagepub (Hilliard & Jamieson 2008)**: full text obtained via Stanford Library — `hilliard-jamieson-2008-winning-solar-races-with-interface-design.pdf`
 - **Springer (Pudney & Howlett 2002)**: full text obtained via Stanford Library — `A_1020907101234.pdf`
 - **MDPI (Betancur et al. 2017)**: open access, full PDF available
@@ -637,7 +618,7 @@ SLSQP is faster per run and fine when you have a good initial guess (e.g. seed w
 
 ---
 
-## 9. References
+## 6. References
 - [InsideGNSS 2008 — Michigan NASC](https://insidegnss.com/auto/sepoct08-solarcar.pdf)
 - [Hilliard & Jamieson 2008 — Interface Design](https://journals.sagepub.com/doi/abs/10.1518/106480407X312374) *(paywalled; access via Stanford Library)*
 - [Betancur et al. 2017 — Heuristic Optimization](https://www.mdpi.com/2071-1050/9/10/1576/pdf) *(open access PDF)*

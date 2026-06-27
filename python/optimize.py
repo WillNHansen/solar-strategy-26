@@ -269,8 +269,6 @@ def run_dp(
 
     Complexity: O(N × n_Eb × n_v). At N=500, n_Eb=200, n_v=50 ≈ 5M ops, ~seconds.
     """
-    from scipy.optimize import OptimizeResult
-
     N      = len(segments)
     arrays = make_arrays(segments, weather)
     bounds = _build_bounds(segments, weather, vehicle)

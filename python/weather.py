@@ -7,7 +7,7 @@ use, call synthetic_weather() which generates physically plausible test data.
 
 Solcast returns GHI (Global Horizontal Irradiance) directly, which already
 has the sun angle baked in — so no pvlib / sin(φ) calculation is needed.
-If your Solcast tier only provides DNI, see the note in strategy_research_notes.md.
+If your Solcast tier only provides DNI, see the note in research_notes.md.
 """
 
 from __future__ import annotations
@@ -32,33 +32,35 @@ def fetch_solcast(
     race_start: datetime,
     initial_speed_ms: float,
     api_key: str,
+    arrival_times: Optional[list[datetime]] = None,
 ) -> list[SegmentWeather]:
     """
     Fetch GHI and wind forecasts from Solcast for each segment.
 
-    Estimates arrival time at each segment by integrating distance / speed,
-    then queries Solcast's forecast endpoint at (lat, lon, time).
-
     Args:
         segments:          Route segment list from route.load_gpx()
         race_start:        UTC datetime of race start
-        initial_speed_ms:  Approximate average speed for arrival time estimation (m/s).
-                           Use the v* estimate or last optimizer result.
+        initial_speed_ms:  Average speed for naive arrival estimation (m/s), used
+                           only when arrival_times is None.
         api_key:           Solcast API key.
+        arrival_times:     Pre-computed per-segment arrivals accounting for overnight
+                           stops (from schedule.compute_arrival_times). Strongly
+                           preferred for multi-day races; the naive fallback ignores
+                           overnight stops and queries the wrong time of day.
 
     Returns:
         One SegmentWeather per segment, in order.
 
-    TODO: Solcast rate-limits free-tier accounts. Cache responses to disk
-          so repeated optimizer runs don't exhaust the quota. Consider
-          fetching once per batch of segments at coarser spatial resolution
-          and interpolating, rather than one call per segment.
+    TODO: Solcast rate-limits free-tier accounts. Cache responses to disk and/or
+          fetch at coarser spatial resolution and interpolate, rather than one
+          call per segment.
     """
     weather: list[SegmentWeather] = []
     elapsed_s = 0.0
 
-    for seg in segments:
-        arrival = race_start + timedelta(seconds=elapsed_s)
+    for i, seg in enumerate(segments):
+        arrival = arrival_times[i] if arrival_times is not None \
+            else race_start + timedelta(seconds=elapsed_s)
         arrival_utc = arrival.astimezone(timezone.utc)
 
         # Solcast radiation + weather endpoint

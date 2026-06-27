@@ -11,9 +11,8 @@ Writes results to multi_seed_results.json for plotting.
 from __future__ import annotations
 import argparse
 import json
-import math
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -24,42 +23,9 @@ from strategy.python.weather import synthetic_weather
 from strategy.python.optimize import (
     run_multi_seed, make_constant_seed, _build_bounds, _seed_v_star,
 )
-
-RACE_START_HOUR = 9
-RACE_STOP_HOUR  = 18
-
-
-def _compute_arrival_times(segments, race_start, v_estimate):
-    arrivals = []
-    current  = race_start
-    for seg in segments:
-        hour = current.hour + current.minute / 60.0
-        if hour >= RACE_STOP_HOUR:
-            current = (current + timedelta(days=1)).replace(
-                hour=RACE_START_HOUR, minute=0, second=0, microsecond=0
-            )
-        arrivals.append(current)
-        current = current + timedelta(seconds=seg.distance_m / v_estimate)
-    return arrivals
-
-
-def _find_day_boundaries(arrivals):
-    return [i for i in range(len(arrivals) - 1) if arrivals[i+1].date() != arrivals[i].date()]
-
-
-def _overnight_charge_Wh(vehicle, peak_ghi=900.0):
-    def ghi(h):
-        f = h / 24.0
-        return peak_ghi * math.sin(math.pi * (f - 0.25) / 0.5) if 0.25 <= f <= 0.75 else 0.0
-
-    def integrate(t0, t1, n=60):
-        dt = (t1 - t0) / n
-        s = sum(ghi(t0 + k * dt) for k in range(n + 1))
-        s -= 0.5 * (ghi(t0) + ghi(t1))
-        return s * dt
-
-    Wh_m2 = integrate(18, 20) + integrate(7, 9)
-    return Wh_m2 * vehicle.Ai * vehicle.eta_s * (vehicle.eta_b ** 0.5)
+from strategy.python.schedule import (
+    compute_arrival_times, find_day_boundaries, overnight_charge_Wh,
+)
 
 
 def main():
@@ -80,14 +46,14 @@ def main():
     print(f"  {len(segments)} segments, {total_distance_km(segments):.1f} km total")
 
     vehicle = VehicleParams()
-    arrivals       = _compute_arrival_times(segments, race_start, 22.0)
-    day_boundaries = _find_day_boundaries(arrivals)
+    arrivals       = compute_arrival_times(segments, race_start, 22.0)
+    day_boundaries = find_day_boundaries(arrivals)
     n_days         = len(day_boundaries) + 1
     print(f"  {n_days} race days, boundaries at segments: {day_boundaries}")
 
     weather = synthetic_weather(segments, race_start, 22.0, arrival_times=arrivals)
 
-    charge = _overnight_charge_Wh(vehicle)
+    charge = overnight_charge_Wh(vehicle)
     race   = RaceParams(
         Eb_start=vehicle.Eb_max,
         Eb_finish_min=250.0,

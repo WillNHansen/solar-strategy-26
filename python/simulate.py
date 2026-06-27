@@ -43,6 +43,21 @@ class RouteArrays:
     N:           int
 
 
+_KIN_BLEND_WH = 0.1  # blend half-width (Wh) smoothing the regen↔motor switch near dKE≈0
+
+
+def _kinetic_eff(dKE_Wh, vehicle: VehicleParams, eta_sqrt: float):
+    """
+    Effective efficiency multiplier for kinetic-energy transitions.
+
+    Smoothly blends motor-draw (speeding up, dKE>0) and regen-recovery (slowing,
+    dKE<0) across dKE≈0 with a tanh, keeping the gradient continuous so SLSQP's
+    line search doesn't stall at the boundary. Works for scalars and arrays.
+    """
+    alpha = 0.5 * (1.0 + np.tanh(dKE_Wh / _KIN_BLEND_WH))  # 0 = full regen, 1 = full motor
+    return alpha / vehicle.eta_m / eta_sqrt + (1 - alpha) * vehicle.eta_regen * eta_sqrt
+
+
 def make_arrays(segments: list[RouteSegment], weather: list[SegmentWeather]) -> RouteArrays:
     return RouteArrays(
         d           = np.array([s.distance_m    for s in segments]),
@@ -75,6 +90,10 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
     relative = np.radians(arrays.wind_dir - arrays.heading)
     vw = arrays.wind_speed * np.cos(relative)    # headwind component (m/s)
 
+    # NOTE: vectorized paths use CdA_flat, not the yaw curve CdA(beta) that the
+    # scalar physics.py path uses. They agree while CdA_yaw is None (the default).
+    # If a yaw curve is added, vectorize it here too or the optimizer and the
+    # final simulate() will disagree.
     F_aero  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
     F_roll  = vehicle.Crr * vehicle.m * vehicle.g                   # scalar, broadcasts
     F_grade = vehicle.m * vehicle.g * arrays.grade
@@ -95,15 +114,10 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
 
     # Kinetic energy transitions between segments.
     # dKE_Wh[i] = ½m(v[i]² - v[i-1]²) / 3600  (Wh; positive = speeding up)
-    # Acceleration draws from battery through motor; deceleration recovers via regen.
+    # Acceleration draws from the battery through the motor; deceleration regens.
     dKE_Wh = np.zeros(arrays.N)
     dKE_Wh[1:] = 0.5 * vehicle.m * (v[1:] ** 2 - v[:-1] ** 2) / 3600.0
-    # Use a smooth blend near zero to avoid gradient discontinuity at the
-    # acceleration/deceleration boundary, which causes SLSQP linesearch failures.
-    _kin_scale = 0.1  # Wh — blend width (small relative to typical dKE)
-    _alpha = 0.5 * (1.0 + np.tanh(dKE_Wh / _kin_scale))  # 0=full regen, 1=full motor
-    _eff_kin = _alpha / vehicle.eta_m / eta_sqrt + (1 - _alpha) * vehicle.eta_regen * eta_sqrt
-    dE_kin = -dKE_Wh * _eff_kin
+    dE_kin = -dKE_Wh * _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
 
     return dE + dE_kin
 
@@ -184,18 +198,17 @@ def energy_deltas_grad_vec(
     # Steady-state diagonal
     ss_diag = eta_factor * arrays.d / 3600.0 / v * (dnet_dv - net_W / v)
 
-    # Kinetic energy gradient — use the same smooth blend as energy_deltas_vec.
+    # Kinetic energy gradient. We treat _eff_kin as locally constant (ignore its
+    # tanh derivative — negligible except in a narrow band around dKE≈0).
     dKE_Wh = np.zeros(N)
     dKE_Wh[1:] = 0.5 * vehicle.m * (v[1:] ** 2 - v[:-1] ** 2) / 3600.0
-    _kin_scale = 0.1
-    _alpha     = 0.5 * (1.0 + np.tanh(dKE_Wh / _kin_scale))
-    _eff_kin   = _alpha / vehicle.eta_m / eta_sqrt + (1 - _alpha) * vehicle.eta_regen * eta_sqrt
-    # d(dE_kin[i])/d(v[i]): dKE_Wh[i] = ½m(v[i]²-v[i-1]²)/3600 → d/dv[i] = m*v[i]/3600
-    kin_diag      = -_eff_kin * vehicle.m * v / 3600.0
-    kin_diag[0]   = 0.0
-    # d(dE_kin[i])/d(v[i-1]): d/dv[i-1] = -m*v[i-1]/3600
+    eff_kin = _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
+    # d(dE_kin[i])/d(v[i]) = -eff_kin * m*v[i]/3600   (dKE_Wh[i] depends on v[i])
+    kin_diag    = -eff_kin * vehicle.m * v / 3600.0
+    kin_diag[0] = 0.0
+    # d(dE_kin[i])/d(v[i-1]) = +eff_kin * m*v[i-1]/3600
     sub        = np.zeros(N)
-    sub[1:]    = _eff_kin[1:] * vehicle.m * v[:-1] / 3600.0
+    sub[1:]    = eff_kin[1:] * vehicle.m * v[:-1] / 3600.0
 
     return ss_diag + kin_diag, sub
 
@@ -253,9 +266,7 @@ def simulate(
         if i > 0:
             eta_sqrt = vehicle.eta_b ** 0.5
             dKE_Wh = 0.5 * vehicle.m * (vi ** 2 - v_prev ** 2) / 3600.0
-            _alpha = 0.5 * (1.0 + np.tanh(dKE_Wh / 0.1))
-            _eff   = _alpha / vehicle.eta_m / eta_sqrt + (1 - _alpha) * vehicle.eta_regen * eta_sqrt
-            dE    += -dKE_Wh * _eff
+            dE    += -dKE_Wh * _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
 
         energy = float(np.clip(energy + dE, 0.0, vehicle.Eb_max))
         v_prev = vi
