@@ -2,7 +2,7 @@
 
 Pre-race velocity optimizer and race simulation for SSCP's 2026 solar car campaign.
 
-Given a GPX route and a race start time, the optimizer finds the speed profile that minimizes total race time subject to battery, speed limit, and overnight stop constraints. Supports SLSQP (fast, gradient-based), Dynamic Programming (globally optimal energy allocation), and a DP→SLSQP hybrid.
+Given a GPX route and a race start time, the optimizer finds the speed profile that minimizes total race time subject to battery, speed limit, and overnight stop constraints. It uses SLSQP (fast, gradient-based) seeded with the Pudney critical speed v\*, with analytical objective and constraint Jacobians.
 
 ## Repo layout
 
@@ -70,28 +70,6 @@ The `--plot` PNG stacks the optimized speed profile (top) over the battery traje
 python -m python.main --gpx gpx/Seg1A.gpx --start "2026-07-13 09:00" --plot results/strategy.png
 ```
 
-### Multi-seed convergence experiment
-
-Runs the SLSQP optimizer from 10 different starting points in parallel to test for local optima:
-
-```bash
-python -m python.multi_seed \
-  --gpx gpx/Seg1A.gpx \
-  --start "2026-07-13 09:00"
-```
-
-Output goes to `results/multi_seed_results.json` by default.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--gpx` | *(required)* | Path to route GPX file |
-| `--start` | *(required)* | Race start datetime |
-| `--n-seeds` | 10 | Number of starting points |
-| `--segment-m` | 5000 | Segment length in metres |
-| `--max-iter` | 2000 | SLSQP iteration limit per seed |
-| `--output` | `results/multi_seed_results.json` | JSON output path |
-| `--plot` | None | Save a velocity + battery comparison plot (PNG) overlaying all seeds |
-
 ### Generate a synthetic route
 
 Creates a synthetic GPX for development and testing when the real route isn't available:
@@ -111,20 +89,17 @@ Output goes to `gpx/wsc_synthetic.gpx` by default.
 
 ### Plotting from your own scripts
 
-`python/plot.py` exposes two helpers for use beyond the CLI flags:
+Beyond the `--plot` flag, `python/plot.py` exposes:
 
-- `plot_result(segments, result, vehicle, race, path, show_seed=True)` — a single run.
-- `plot_comparison(segments, results, labels, vehicle, race, path)` — overlay several runs, e.g. SLSQP vs DP vs hybrid:
+- `plot_result(segments, result, vehicle, race, path, show_seed=True)` — a single run's velocity + battery profile.
+- `plot_comparison(segments, results, labels, vehicle, race, path)` — overlay several `OptimizerResult`s on shared axes (e.g. comparing two parameter sets).
 
 ```python
-from python.optimize import run_optimizer, run_dp, run_dp_then_slsqp
-from python.plot import plot_comparison
+from python.optimize import run_optimizer
+from python.plot import plot_result
 
-runs = [run_optimizer(segments, weather, vehicle, race),
-        run_dp(segments, weather, vehicle, race),
-        run_dp_then_slsqp(segments, weather, vehicle, race)]
-plot_comparison(segments, runs, ["SLSQP", "DP", "hybrid"], vehicle, race,
-                "results/compare.png")
+result = run_optimizer(segments, weather, vehicle, race)
+plot_result(segments, result, vehicle, race, "results/strategy.png", show_seed=True)
 ```
 
 ## Vehicle and race parameters

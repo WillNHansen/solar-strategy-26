@@ -2,7 +2,7 @@
 Race-day scheduling helpers: per-segment arrival times, overnight-stop
 locations, and solar energy collected at each stop.
 
-Shared by main.py and multi_seed.py so the day-boundary logic lives in one place.
+Used by main.py to place weather queries and overnight constraints by day.
 """
 
 from __future__ import annotations

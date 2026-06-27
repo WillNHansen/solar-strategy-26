@@ -3,7 +3,7 @@ Plot optimizer output: velocity profile and battery (SoC) trajectory vs. distanc
 
 Saves PNGs — no interactive display needed. Two entry points:
   - plot_result()      one optimizer run (optionally overlaying its seed)
-  - plot_comparison()  several runs on shared axes (e.g. SLSQP vs DP vs hybrid)
+  - plot_comparison()  several runs on shared axes (e.g. two parameter sets)
 
 Both stack velocity (top) over battery (bottom) sharing a distance x-axis, with
 overnight stops marked and the battery floor/ceiling drawn as reference lines.
@@ -101,7 +101,7 @@ def plot_comparison(
     """
     Overlay several optimizer runs on shared velocity + battery axes, save to `path`.
 
-    One colour per run; useful for SLSQP vs DP vs hybrid, or multi-seed spreads.
+    One colour per run; useful for comparing a few runs you've produced.
     Returns `path`.
     """
     dist = _cumulative_km(segments)

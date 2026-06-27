@@ -18,7 +18,7 @@ We didn't follow this line because our model violates its key assumptions:
 
 The Michigan (Betancur/Yesil) line takes the alternative approach: build a detailed simulation and run a numerical optimizer over it. Michigan ran multiple simulations in parallel with different weather inputs mid-race and used the spread to judge forecast uncertainty. This is the practical approach for real racing — re-runnable in minutes when conditions change, and naturally handles all the nonlinearities.
 
-**Our choice:** simulate each segment with the full drivetrain equation (Betancur, research_notes.md §2.3), then minimize total time with SLSQP (gradient-based, fast) or DP (global, exact). Same philosophy as Michigan; different optimizer.
+**Our choice:** simulate each segment with the full drivetrain equation (Betancur, research_notes.md §2.3), then minimize total time with SLSQP (gradient-based, fast), seeded by the Pudney critical speed v\*. Same philosophy as Michigan; different optimizer.
 
 ### 1.2 Why SLSQP as the primary optimizer
 
@@ -225,9 +225,8 @@ To distinguish these, the next step is a **targeted morning sprint seed**: v_max
 
 **Fixes (in order of effort):**
 1. **Morning sprint seed** — set seed speed to v_max for segments where projected Eb would exceed ~95% of Eb_max. Tests whether SLSQP can escape the current basin from a better-shaped starting point. More principled than a hardcoded heuristic.
-2. **Dynamic Programming** — replaces SLSQP entirely; models battery clipping exactly in the transition function; guaranteed global optimum within discretization. See "Alternative Optimizers" section.
-3. Warm-start from the previous optimizer run after re-estimating arrival times.
-4. Global stochastic optimizer (CMA-ES, simulated annealing) — slower but can escape any local minimum.
+2. Warm-start from the previous optimizer run after re-estimating arrival times.
+3. **Global method (DP or stochastic search)** — models battery clipping exactly and guarantees a global optimum within discretization, at higher cost. A DP version was prototyped and removed to keep the codebase SLSQP-only; revisit it (or CMA-ES / simulated annealing) only if better seeding fails to close the gap.
 
 **Priority:** V1 — this is a correctness issue, not just a refinement.
 
