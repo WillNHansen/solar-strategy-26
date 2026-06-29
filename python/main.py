@@ -5,18 +5,19 @@ Usage:
     python -m python.main --gpx route.gpx --start "2026-07-13 09:00" [--solcast-key KEY]
 
 Without --solcast-key, synthetic weather is used (good for development).
+Physics model toggles live in python/params.py (ModelFeatures).
 """
 
 from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
+import numpy as np
 
-from python.params import VehicleParams, RaceParams
+from python.params import VehicleParams, RaceParams, ModelFeatures
 from python.route import load_gpx, smooth_grade, total_distance_km
 from python.weather import fetch_solcast, synthetic_weather
 from python.optimize import run_optimizer
-from python.simulate import simulate
 from python.schedule import (
     compute_arrival_times, find_day_boundaries, overnight_charge_Wh,
 )
@@ -44,9 +45,6 @@ def main() -> None:
                         help="Save a velocity + battery plot (PNG) to this path")
     args = parser.parse_args()
 
-    # Treat --start as local race time (Darwin, UTC+9:30 for WSC).
-    # All internal time calculations are relative offsets from this point,
-    # so the absolute timezone doesn't matter — only the local hour does.
     race_start = datetime.fromisoformat(args.start)
 
     # ── Load route ────────────────────────────────────────────────────────────
@@ -55,57 +53,65 @@ def main() -> None:
     segments = smooth_grade(segments, window=args.smooth)
     print(f"  {len(segments)} segments, {total_distance_km(segments):.1f} km total")
 
-    # ── Vehicle parameters ────────────────────────────────────────────────────
-    vehicle = VehicleParams()
+    vehicle  = VehicleParams()
+    features = ModelFeatures()
 
-    # ── Compute multi-day arrival times ──────────────────────────────────────
-    # Arrivals must be known before optimizing so weather() assigns the correct
-    # local hour (GHI) per segment and overnight constraints land on the right
-    # segment. Estimated from a constant speed (see compute_arrival_times).
-    initial_speed  = 22.0  # m/s — only affects day-boundary placement
-    arrivals       = compute_arrival_times(segments, race_start, initial_speed)
-    day_boundaries = find_day_boundaries(arrivals)
-    n_days = len(day_boundaries) + 1
-    print(f"  {n_days} race days, day-end boundaries at segments: {day_boundaries}")
-
-    # ── Weather ───────────────────────────────────────────────────────────────
+    # ── Iterative optimization: update day boundaries from actual speeds ──────
+    # Boundaries depend on the speed profile (where is the car at 18:00?), but
+    # the speed profile depends on boundaries. We iterate: run the optimizer,
+    # recompute boundaries from the resulting speeds, re-run until convergence.
     if args.solcast_key:
         print("Fetching Solcast weather forecasts...")
-        weather = fetch_solcast(segments, race_start, initial_speed,
-                                args.solcast_key, arrival_times=arrivals)
+        _weather_fn = lambda arrivals: fetch_solcast(
+            segments, race_start, 22.0, args.solcast_key, arrival_times=arrivals)
     else:
         print("Using synthetic weather (no Solcast key provided)")
-        weather = synthetic_weather(segments, race_start, initial_speed,
-                                    arrival_times=arrivals)
+        _weather_fn = lambda arrivals: synthetic_weather(
+            segments, race_start, 22.0, arrival_times=arrivals)
 
     charge_per_night = overnight_charge_Wh(vehicle)
     print(f"  Overnight solar charge: {charge_per_night:.0f} Wh per stop")
 
-    race = RaceParams(
-        Eb_start=vehicle.Eb_max,
-        Eb_finish_min=250.0,
-        overnight_segment_indices=day_boundaries,
-        Eb_overnight_min=500.0,
-        overnight_charge_Wh=[charge_per_night] * len(day_boundaries),
-        # TODO: add checkpoints from race rulebook, e.g.:
-        # checkpoints=[
-        #     Checkpoint("Glendambo", segment_index=180, t_open_s=8*3600, t_close_s=16*3600),
-        # ],
-    )
+    v_iter          = np.full(len(segments), 22.0)  # cold-start estimate
+    prev_boundaries = None
+    result          = None
 
-    # ── Optimize ──────────────────────────────────────────────────────────────
-    print(f"Running SLSQP optimizer ({len(segments)} segments, {n_days} days)...")
-    result = run_optimizer(
-        segments, weather, vehicle, race,
-        max_iter=args.max_iter,
-        verbose=args.verbose,
-    )
+    for iteration in range(1, 6):
+        arrivals       = compute_arrival_times(segments, race_start, v_iter)
+        day_boundaries = find_day_boundaries(arrivals)
+        n_days         = len(day_boundaries) + 1
 
-    sim      = simulate(result.v_opt, segments, weather, vehicle, race)
-    seed_sim = simulate(result.seed,  segments, weather, vehicle, race)
+        if day_boundaries == prev_boundaries:
+            print(f"  Boundaries converged after {iteration - 1} iteration(s).")
+            break
+        if prev_boundaries is None:
+            print(f"  {n_days} race days, initial boundaries at segments: {day_boundaries}")
+        else:
+            print(f"  Iteration {iteration}: boundaries updated → {day_boundaries}")
+        prev_boundaries = day_boundaries
+
+        weather = _weather_fn(arrivals)
+        race = RaceParams(
+            Eb_start=vehicle.Eb_max,
+            Eb_finish_min=250.0,
+            overnight_segment_indices=day_boundaries,
+            Eb_overnight_min=500.0,
+            overnight_charge_Wh=[charge_per_night] * len(day_boundaries),
+        )
+
+        print(f"Running SLSQP optimizer ({len(segments)} segments, {n_days} days)...")
+        result = run_optimizer(
+            segments, weather, vehicle, race,
+            features=features,
+            max_iter=args.max_iter,
+            verbose=args.verbose,
+        )
+        v_iter = result.v_opt
+
+    sim      = result.sim
+    seed_sim = result.seed_sim
 
     # ── Report ────────────────────────────────────────────────────────────────
-    # Compute driving-hours only (exclude night segments at v_min)
     print()
     print("=" * 50)
     print("OPTIMIZATION RESULT")
@@ -127,24 +133,29 @@ def main() -> None:
     print("=" * 50)
 
     if not result.scipy_result.success:
-        print(f"\nWarning: {result.scipy_result.message}")
+        if result.scipy_result.status == 8:
+            print(f"\nWarning: SLSQP hit a constraint boundary it couldn't escape "
+                  f"(positive directional derivative). The problem may be infeasible "
+                  f"with the current features/params — result is the best found, not optimal.")
+        else:
+            print(f"\nWarning: {result.scipy_result.message}")
 
     # ── Optional output ───────────────────────────────────────────────────────
     if args.output:
         out = {
-            "total_time_h":    sim.total_time_s / 3600,
-            "feasible":        sim.feasible,
+            "total_time_h": sim.total_time_s / 3600,
+            "feasible":     sim.feasible,
             "segments": [
                 {
-                    "index":      seg.index,
-                    "lat":        seg.lat,
-                    "lon":        seg.lon,
-                    "distance_m": seg.distance_m,
-                    "grade":      seg.grade,
+                    "index":       seg.index,
+                    "lat":         seg.lat,
+                    "lon":         seg.lon,
+                    "distance_m":  seg.distance_m,
+                    "grade":       seg.grade,
                     "day_of_race": next((d for d, b in enumerate(day_boundaries) if i <= b), n_days - 1) + 1,
-                    "v_opt_kmh":  float(result.v_opt[i] * 3.6),
-                    "Eb_Wh":      float(sim.Eb[i]),
-                    "t_cum_s":    float(sim.t_cum[i]),
+                    "v_opt_kmh":   float(result.v_opt[i] * 3.6),
+                    "Eb_Wh":       float(sim.Eb[i]),
+                    "t_cum_s":     float(sim.t_cum[i]),
                 }
                 for i, seg in enumerate(segments)
             ],
@@ -154,7 +165,6 @@ def main() -> None:
         print(f"\nResult written to {args.output}")
 
     # ── Optional plot ─────────────────────────────────────────────────────────
-    # Imported lazily so matplotlib isn't required unless --plot is requested.
     if args.plot:
         from python.plot import plot_result
         plot_result(segments, result, vehicle, race, args.plot,

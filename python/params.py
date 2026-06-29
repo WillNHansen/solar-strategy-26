@@ -63,6 +63,24 @@ class VehicleParams:
 
 
 @dataclass
+class ModelFeatures:
+    """
+    Toggle individual physics terms on/off for sensitivity analysis.
+
+    Each flag zeroes the corresponding arrays before they enter the optimizer,
+    so the equations themselves are unchanged — a disabled term simply has no
+    magnitude. All flags default to True (full model).
+    """
+    headwind: bool = True   # wind projection onto road axis (v_w term in aero drag)
+    grade:    bool = True   # road grade force (m·g·sin θ)
+    rolling:  bool = True   # rolling resistance (C_rr·m·g)
+    kinetic:  bool = True   # kinetic energy transitions between segments (½mv² term)
+    solar:    bool = True   # solar power income (GHI·Ai·η_s)
+    regen:    bool = True   # energy recovery on descents (η_regen path)
+    aero:     bool = True   # aerodynamic drag (½ρ·CdA·(v−v_w)²)
+
+
+@dataclass
 class Checkpoint:
     """A mandatory checkpoint the car must pass through within a time window."""
     name: str

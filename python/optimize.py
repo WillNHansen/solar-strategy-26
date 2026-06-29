@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
-from python.params import VehicleParams, RaceParams
+from python.params import VehicleParams, RaceParams, ModelFeatures
 from python.route import RouteSegment
 from python.weather import SegmentWeather
 from python.physics import critical_speed_ms, max_speed_from_discharge_limit
@@ -43,8 +43,9 @@ from python.simulate import (
 class OptimizerResult:
     v_opt:         np.ndarray
     sim:           SimResult
-    scipy_result:  OptimizeResult
     seed:          np.ndarray
+    seed_sim:      SimResult
+    scipy_result:  OptimizeResult
 
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
@@ -221,22 +222,56 @@ def _seed_v_star(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+def _apply_features(
+    arrays: RouteArrays, vehicle: VehicleParams, features: ModelFeatures
+) -> tuple[RouteArrays, VehicleParams]:
+    """
+    Return (arrays, vehicle) with disabled terms zeroed out.
+    Copies are made so the caller's originals are never mutated.
+    """
+    import copy, dataclasses
+    arrays = copy.copy(arrays)
+    veh_kw = {}
+
+    if not features.headwind:
+        arrays.wind_speed = np.zeros(arrays.N)
+    if not features.grade:
+        arrays.grade = np.zeros(arrays.N)
+    if not features.rolling:
+        veh_kw["Crr"] = 0.0
+    if not features.kinetic:
+        arrays.skip_kinetic = True
+    if not features.solar:
+        arrays.GHI = np.zeros(arrays.N)
+    if not features.regen:
+        arrays.skip_regen = True
+    if not features.aero:
+        veh_kw["CdA_flat"] = 0.0
+
+    vehicle = dataclasses.replace(vehicle, **veh_kw) if veh_kw else vehicle
+    return arrays, vehicle
+
+
 def run_optimizer(
     segments: list[RouteSegment],
     weather: list[SegmentWeather],
     vehicle: VehicleParams,
     race: RaceParams,
+    features: ModelFeatures = None,
     max_iter: int = 1000,
     tol: float = 1e-6,
     verbose: bool = False,
 ) -> OptimizerResult:
-    arrays      = make_arrays(segments, weather)
+    if features is None:
+        features = ModelFeatures()
+    arrays, vehicle = _apply_features(make_arrays(segments, weather), vehicle, features)
     bounds      = _build_bounds(segments, weather, vehicle)
     constraints = _build_constraints(arrays, vehicle, race)
     seed        = _seed_v_star(segments, weather, vehicle, bounds)
 
+    seed_sim = simulate(seed, segments, weather, vehicle, race, arrays=arrays)
+
     if verbose:
-        seed_sim = simulate(seed, segments, weather, vehicle, race)
         print(f"Seed v*: {seed_sim.total_time_s / 3600:.2f} h, "
               f"min SoC = {seed_sim.min_Eb_Wh:.0f} Wh, feasible = {seed_sim.feasible}")
 
@@ -251,15 +286,18 @@ def run_optimizer(
         options={"maxiter": max_iter, "ftol": tol, "disp": verbose},
     )
 
+    # status 8 = "Positive directional derivative for linesearch" — SLSQP is stuck
+    # at a constraint boundary, usually because the problem is infeasible.
     if not result.success and verbose:
         print(f"Warning: SLSQP did not fully converge: {result.message}")
 
     v_opt = np.clip(result.x, [lo for lo, _ in bounds], [hi for _, hi in bounds])
-    sim   = simulate(v_opt, segments, weather, vehicle, race)
+    sim   = simulate(v_opt, segments, weather, vehicle, race, arrays=arrays)
 
     return OptimizerResult(
         v_opt=v_opt,
         sim=sim,
-        scipy_result=result,
         seed=seed,
+        seed_sim=seed_sim,
+        scipy_result=result,
     )

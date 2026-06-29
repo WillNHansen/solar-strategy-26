@@ -41,6 +41,8 @@ class RouteArrays:
     wind_speed:  np.ndarray   # m/s
     wind_dir:    np.ndarray   # degrees (meteorological)
     N:           int
+    skip_kinetic: bool = False  # set by ModelFeatures.kinetic=False
+    skip_regen:   bool = False  # set by ModelFeatures.regen=False
 
 
 _KIN_BLEND_WH = 0.1  # blend half-width (Wh) smoothing the regen↔motor switch near dKE≈0
@@ -101,7 +103,11 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
     Pm = v * (F_aero + F_roll + F_grade)   # motor shaft power (W); negative = regen
 
     # Battery power: positive = discharging, negative = charging
-    Pb = np.where(Pm >= 0, Pm / vehicle.eta_m, Pm * vehicle.eta_regen)
+    # skip_regen: clamp descents to zero battery draw (no energy recovery)
+    if arrays.skip_regen:
+        Pb = np.where(Pm >= 0, Pm / vehicle.eta_m, 0.0)
+    else:
+        Pb = np.where(Pm >= 0, Pm / vehicle.eta_m, Pm * vehicle.eta_regen)
     Ps = arrays.GHI * vehicle.Ai * vehicle.eta_s   # solar input (W)
 
     net_W  = Ps - Pb
@@ -111,6 +117,9 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
     dE = np.where(net_W >= 0,
                   net_W * t_h * eta_sqrt,    # charging: lose energy going in
                   net_W * t_h / eta_sqrt)    # discharging: lose energy coming out
+
+    if arrays.skip_kinetic:
+        return dE
 
     # Kinetic energy transitions between segments.
     # dKE_Wh[i] = ½m(v[i]² - v[i-1]²) / 3600  (Wh; positive = speeding up)
@@ -185,7 +194,10 @@ def energy_deltas_grad_vec(
     Pm = v * (F_aero + F_roll + F_grade)
 
     dPm_dv = (F_aero + F_roll + F_grade) + vehicle.rho * vehicle.CdA_flat * v * (v - vw)
-    dPb_dv = np.where(Pm >= 0, dPm_dv / vehicle.eta_m, dPm_dv * vehicle.eta_regen)
+    if arrays.skip_regen:
+        dPb_dv = np.where(Pm >= 0, dPm_dv / vehicle.eta_m, 0.0)
+    else:
+        dPb_dv = np.where(Pm >= 0, dPm_dv / vehicle.eta_m, dPm_dv * vehicle.eta_regen)
 
     Ps    = arrays.GHI * vehicle.Ai * vehicle.eta_s
     Pb    = np.where(Pm >= 0, Pm / vehicle.eta_m, Pm * vehicle.eta_regen)
@@ -197,6 +209,9 @@ def energy_deltas_grad_vec(
 
     # Steady-state diagonal
     ss_diag = eta_factor * arrays.d / 3600.0 / v * (dnet_dv - net_W / v)
+
+    if arrays.skip_kinetic:
+        return ss_diag, np.zeros(N)
 
     # Kinetic energy gradient. We treat _eff_kin as locally constant (ignore its
     # tanh derivative — negligible except in a narrow band around dKE≈0).
@@ -232,6 +247,7 @@ def simulate(
     weather: list[SegmentWeather],
     vehicle: VehicleParams,
     race: RaceParams,
+    arrays: "RouteArrays | None" = None,
 ) -> SimResult:
     """
     Full forward simulation with battery clipping.
@@ -239,6 +255,11 @@ def simulate(
     Used for the final result and mid-race re-simulation — not in the optimizer
     hot path. Clipping correctly handles the rare case where regen into a full
     battery or discharge below zero would otherwise violate physics.
+
+    Pass `arrays` (the same RouteArrays used by the optimizer) to ensure the
+    simulation uses identical physics — same feature flags (skip_kinetic,
+    skip_regen), same zeroed GHI/grade/wind that ModelFeatures applied.
+    Without it, feature-disabled runs would show different SoC in the report.
     """
     N = len(segments)
     Eb    = np.empty(N)
@@ -260,13 +281,32 @@ def simulate(
             energy = float(np.clip(energy + overnight_charge_map[i], 0.0, vehicle.Eb_max))
         vi = float(np.clip(v[i], vehicle.v_min, seg.speed_limit_ms))
 
-        dE = energy_delta_Wh(vi, seg, wx, vehicle)
-
-        # Kinetic energy cost of speed change from previous segment
-        if i > 0:
-            eta_sqrt = vehicle.eta_b ** 0.5
-            dKE_Wh = 0.5 * vehicle.m * (vi ** 2 - v_prev ** 2) / 3600.0
-            dE    += -dKE_Wh * _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
+        if arrays is not None:
+            # Use modified arrays data so feature flags are respected
+            vw     = arrays.wind_speed[i] * np.cos(np.radians(arrays.wind_dir[i] - arrays.heading[i]))
+            F_aero = 0.5 * vehicle.rho * vehicle.CdA_flat * (vi - vw) ** 2
+            F_roll = vehicle.Crr * vehicle.m * vehicle.g
+            F_grad = vehicle.m * vehicle.g * float(arrays.grade[i])
+            Pm     = vi * (F_aero + F_roll + F_grad)
+            if arrays.skip_regen:
+                Pb = Pm / vehicle.eta_m if Pm >= 0 else 0.0
+            else:
+                Pb = Pm / vehicle.eta_m if Pm >= 0 else Pm * vehicle.eta_regen
+            Ps    = float(arrays.GHI[i]) * vehicle.Ai * vehicle.eta_s
+            net_W = Ps - Pb
+            t_h   = seg.distance_m / vi / 3600.0
+            eta_sqrt   = vehicle.eta_b ** 0.5
+            eta_factor = eta_sqrt if net_W >= 0 else 1.0 / eta_sqrt
+            dE    = net_W * t_h * eta_factor
+            if i > 0 and not arrays.skip_kinetic:
+                dKE_Wh = 0.5 * vehicle.m * (vi ** 2 - v_prev ** 2) / 3600.0
+                dE    += -dKE_Wh * _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
+        else:
+            dE = energy_delta_Wh(vi, seg, wx, vehicle)
+            if i > 0:
+                eta_sqrt = vehicle.eta_b ** 0.5
+                dKE_Wh = 0.5 * vehicle.m * (vi ** 2 - v_prev ** 2) / 3600.0
+                dE    += -dKE_Wh * _kinetic_eff(dKE_Wh, vehicle, eta_sqrt)
 
         energy = float(np.clip(energy + dE, 0.0, vehicle.Eb_max))
         v_prev = vi
@@ -277,7 +317,8 @@ def simulate(
         t_seg[i] = ti
         t_cum[i] = elapsed
 
-    eps = 1.0  # 1 Wh tolerance for floating-point drift between unclipped and clipped paths
+    eps = 5.0  # Wh tolerance for drift between optimizer's unclipped cumsum and clipped simulate.
+               # Drift is larger when features are disabled (more ceiling clipping = more path divergence).
     feasible = bool(
         np.all(Eb >= vehicle.Eb_min - eps)
         and Eb[-1] >= race.Eb_finish_min - eps

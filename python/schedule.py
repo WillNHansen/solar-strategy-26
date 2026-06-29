@@ -20,29 +20,31 @@ RACE_STOP_HOUR  = 18   # 18:00 local
 def compute_arrival_times(
     segments: list[RouteSegment],
     race_start: datetime,
-    v_estimate: float,
+    v_estimate,
     start_hour: float = RACE_START_HOUR,
     stop_hour: float = RACE_STOP_HOUR,
 ) -> list[datetime]:
     """
     Estimated arrival datetime at each segment, accounting for overnight stops.
 
-    When an arrival crosses stop_hour, the clock jumps to start_hour the next
-    morning — modelling a multi-day race where the car parks each evening.
-
-    A constant v_estimate breaks the chicken-and-egg dependency (arrivals depend
-    on the speed profile we're about to optimize). A 20% speed error shifts a day
-    boundary by ~100 km, which is fine for placing constraints and weather times.
+    v_estimate: scalar m/s applied to all segments, or a per-segment array of
+    speeds (e.g. the optimizer output). Per-segment speeds produce accurate
+    boundary locations; a scalar is used for the initial cold-start estimate.
     """
+    try:
+        v_per_seg = list(v_estimate)
+    except TypeError:
+        v_per_seg = [v_estimate] * len(segments)
+
     arrivals = []
     current = race_start
-    for seg in segments:
+    for seg, v in zip(segments, v_per_seg):
         if current.hour + current.minute / 60.0 >= stop_hour:
             current = (current + timedelta(days=1)).replace(
                 hour=int(start_hour), minute=0, second=0, microsecond=0
             )
         arrivals.append(current)
-        current += timedelta(seconds=seg.distance_m / v_estimate)
+        current += timedelta(seconds=seg.distance_m / v)
     return arrivals
 
 
