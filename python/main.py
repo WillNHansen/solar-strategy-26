@@ -75,6 +75,7 @@ def main() -> None:
     v_iter          = np.full(len(segments), 22.0)  # cold-start estimate
     prev_boundaries = None
     result          = None
+    x0              = None   # warm-start from previous solve
 
     for iteration in range(1, 6):
         arrivals       = compute_arrival_times(segments, race_start, v_iter)
@@ -99,14 +100,16 @@ def main() -> None:
             overnight_charge_Wh=[charge_per_night] * len(day_boundaries),
         )
 
-        print(f"Running SLSQP optimizer ({len(segments)} segments, {n_days} days)...")
+        print(f"Running IPOPT optimizer ({len(segments)} segments, {n_days} days)...")
         result = run_optimizer(
             segments, weather, vehicle, race,
             features=features,
             max_iter=args.max_iter,
             verbose=args.verbose,
+            x0=x0,
         )
         v_iter = result.v_opt
+        x0     = result.x0   # warm-start next iteration: [v_opt, Eb_opt]
 
     sim      = result.sim
     seed_sim = result.seed_sim
@@ -116,8 +119,8 @@ def main() -> None:
     print("=" * 50)
     print("OPTIMIZATION RESULT")
     print("=" * 50)
-    print(f"  Converged:        {result.scipy_result.success}")
-    print(f"  Iterations:       {result.scipy_result.nit}")
+    print(f"  Converged:        {result.stats.success}  ({result.stats.return_status})")
+    print(f"  Iterations:       {result.stats.n_iter}")
     print()
     print(f"  Seed (v*):        {seed_sim.total_time_s / 3600:.2f} h driving")
     print(f"  Optimized:        {sim.total_time_s / 3600:.2f} h driving")
@@ -132,13 +135,8 @@ def main() -> None:
     print(f"  Feasible:         {sim.feasible}")
     print("=" * 50)
 
-    if not result.scipy_result.success:
-        if result.scipy_result.status == 8:
-            print(f"\nWarning: SLSQP hit a constraint boundary it couldn't escape "
-                  f"(positive directional derivative). The problem may be infeasible "
-                  f"with the current features/params — result is the best found, not optimal.")
-        else:
-            print(f"\nWarning: {result.scipy_result.message}")
+    if not result.stats.success:
+        print(f"\nWarning: IPOPT did not fully converge: {result.stats.return_status}")
 
     # ── Optional output ───────────────────────────────────────────────────────
     if args.output:

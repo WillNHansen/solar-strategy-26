@@ -2,7 +2,7 @@
 
 Pre-race velocity optimizer and race simulation for SSCP's 2026 solar car campaign.
 
-Given a GPX route and a race start time, the optimizer finds the speed profile that minimizes total race time subject to battery, speed limit, and overnight stop constraints. It uses SLSQP (fast, gradient-based) seeded with the Pudney critical speed v\*, with analytical objective and constraint Jacobians.
+Given a GPX route and a race start time, the optimizer finds the speed profile that minimizes total race time subject to battery, speed limit, and overnight stop constraints. It uses IPOPT (via CasADi) with automatic differentiation, seeded with the Pudney critical speed v\*. Day boundaries (overnight stop locations) are updated iteratively from the actual optimized speed profile until they converge.
 
 ## Repo layout
 
@@ -57,9 +57,9 @@ Without `--solcast-key`, synthetic weather is used — good for development and 
 | `--gpx` | *(required)* | Path to route GPX file |
 | `--start` | *(required)* | Race start datetime, `"YYYY-MM-DD HH:MM"` |
 | `--solcast-key` | None | Solcast API key; omit to use synthetic weather |
-| `--segment-m` | 2000 | Segment length in metres |
+| `--segment-m` | 2000 | Segment length in metres (IPOPT scales roughly linearly with N) |
 | `--smooth` | 5 | Grade smoothing window (segments) |
-| `--max-iter` | 2000 | SLSQP iteration limit |
+| `--max-iter` | 1000 | IPOPT iteration limit per outer iteration |
 | `--output` | None | JSON output path |
 | `--plot` | None | Save a velocity + battery plot (PNG) to this path |
 | `--verbose` | False | Print per-segment details |

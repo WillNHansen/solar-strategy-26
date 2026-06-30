@@ -9,11 +9,21 @@ See [research_notes.md](research_notes.md) for the underlying literature.
 
 ### 1.1 Full problem
 
-Our goal is to find the velocity terms **v[0..N−1]** (m/s per segment) that minimises total race time while ensuring our battery is not depleted:
+We optimise over both speeds **v[0..N−1]** and battery states **E_b[0..N−1]** (one per segment) jointly — the *shooting formulation*:
 
-$$\min_{\mathbf{v}} \sum_{i=0}^{N-1} \frac{d_i}{v_i} \qquad \text{s.t.} \qquad E_b^{\min} \leq E_b[i] \leq E_b^{\max}, \quad v_{\min} \leq v_i \leq v_{\text{limit},i}$$
+$$\min_{\mathbf{v},\,\mathbf{E}_b} \sum_{i=0}^{N-1} \frac{d_i}{v_i}$$
 
-where $E_b[i] = E_b^{\text{start}} + \displaystyle\sum_{j \leq i} \Delta E_j + Q_i$. Each segment's energy increment expands in layers:
+subject to the **energy dynamics** (equality constraints):
+
+$$E_b[0] = E_b^{\text{start}} + \Delta E_0 + Q_0, \qquad E_b[i] = E_b[i-1] + \Delta E_i + Q_i \quad \text{for } i \geq 1$$
+
+and **variable bounds**:
+
+$$E_b^{\min} \leq E_b[i] \leq E_b^{\max}, \qquad v_{\min} \leq v_i \leq v_{\text{limit},i}$$
+
+with tighter lower bounds at overnight stops ($E_b[i_{\text{night}}] \geq E_b^{\text{night}}$) and finish ($E_b[N-1] \geq E_b^{\text{finish}}$).
+
+$Q_i$ is the overnight solar charge added at segment $i$ (non-zero only at the first segment of each new race day). Each segment's energy increment expands in layers:
 
 $$\Delta E_i = \Delta E_i^{\text{ss}} - \Delta E_i^{\text{kin}}$$
 
@@ -57,9 +67,11 @@ Finally, the battery itself loses energy on both charge and discharge. Modelling
 
 $$\Delta E_i^{\text{kin}} = -\underbrace{\frac{m(v_i^2 - v_{i-1}^2)}{7200}}_{\Delta KE_i\;\text{(Wh)}} \cdot \underbrace{\left[\alpha_i \cdot \frac{1}{\eta_m \sqrt{\eta_b}} + (1-\alpha_i)\cdot \eta_{\text{regen}}\sqrt{\eta_b}\right]}_{\text{eff}_\text{kin}}, \qquad \alpha_i = \frac{1}{2}\!\left(1 + \tanh\frac{\Delta KE_i}{0.1}\right)$$
 
-$\alpha_i = 1$ (full motor draw) when speeding up, $\alpha_i = 0$ (full regen recovery) when slowing down. The 0.1 Wh half-width keeps the gradient continuous through $\Delta KE \approx 0$ so SLSQP's line search doesn't stall at the boundary.
+$\alpha_i = 1$ (full motor draw) when speeding up, $\alpha_i = 0$ (full regen recovery) when slowing down. The 0.1 Wh half-width keeps the function C² through $\Delta KE \approx 0$.
 
-$Q_i$ is the solar energy collected at overnight stops up to segment $i$ (charging windows 18:00–20:00 and 07:00–09:00). The full constraint set also includes a finish buffer, per-stop overnight floors, and checkpoint time windows — see §6.
+The same tanh blending is applied to the regen/motor boundary in $P_{b,i}$ and to the charge/discharge boundary in $\Delta E_i^{\text{ss}}$, replacing hard `if-else` branches with smooth approximations (half-width 5 W). This is required for IPOPT's exact Hessian to remain well-conditioned at switching points.
+
+The overnight charges $Q_i$ are non-zero only at the first segment after each overnight stop (charging windows 18:00–20:00 and 07:00–09:00). The full constraint set also includes per-stop overnight floors and checkpoint time windows — see §6.
 
 ### 1.3 Parameters
 
@@ -103,13 +115,64 @@ We didn't follow this line because our model violates its key assumptions:
 
 The Michigan (Betancur/Yesil) line takes the alternative approach: build a detailed simulation and run a numerical optimizer over it. Michigan ran multiple simulations in parallel with different weather inputs mid-race and used the spread to judge forecast uncertainty. This is the practical approach for real racing — re-runnable in minutes when conditions change, and naturally handles all the nonlinearities.
 
-**Our choice:** simulate each segment with the full drivetrain equation (Betancur, research_notes.md §2.3), then minimize total time with SLSQP (gradient-based, fast), seeded by the Pudney critical speed v\*. Same philosophy as Michigan; different optimizer.
+**Our choice:** simulate each segment with the full drivetrain equation (Betancur, research_notes.md §2.3), then minimize total time with IPOPT (via CasADi), seeded by the Pudney critical speed v\*. Same philosophy as Michigan; we use an interior-point NLP solver instead of their heuristic search.
 
-### 2.2 Why SLSQP as the primary optimizer
+### 2.2 How the optimizer works
 
-SLSQP is the gradient-based workhorse: ~7 seconds to converge on a 3000-segment route. This matters for live race use — re-running the optimizer mid-race after a cloud update needs to complete before the car has driven past the relevant segment.
+The optimizer is built from three pieces: a problem formulation (shooting), a solver (IPOPT), and a symbolic framework (CasADi). They're separable concerns — it helps to understand each one before seeing why they fit together.
 
-**Literature validation:** Betancur et al. compare GA, BB-BC (Big-Bang Big-Crunch), and exhaustive search on the same model. Exhaustive search won but is impractical live; BB-BC was fastest with comparable results. We use SLSQP instead, which is faster still for smooth differentiable objectives and is well-validated in the scipy stack.
+#### The shooting formulation
+
+The most natural way to write the optimization problem is: choose speeds v[0..N-1], define battery state as the running sum $E_b[i] = E_b^\text{start} + \sum_{j \leq i} \Delta E_j$, and add inequality constraints $E_b[i] \geq E_b^\text{min}$ for all i. Call this the *direct* formulation.
+
+The problem with it: $E_b[j]$ is a function of *every* speed v[0] through v[j]. So the constraint Jacobian (the matrix of partial derivatives $\partial E_b[j] / \partial v[i]$) has a nonzero entry in every position where $i \leq j$ — a full lower-triangular N×N matrix. Every inequality constraint is coupled to every upstream speed decision. Interior-point solvers handle this poorly because they need to factor a dense KKT system at each step, and the barrier penalties from 499 simultaneous inequality constraints create a stiff, poorly conditioned landscape.
+
+The *shooting* formulation avoids this by making $E_b[i]$ an explicit decision variable and writing the energy equation as a *local* equality constraint:
+
+$$E_b[i] = E_b[i-1] + \Delta E_i + Q_i$$
+
+Now the constraint Jacobian is bidiagonal: each row touches only four variables ($v[i]$, $v[i-1]$, $E_b[i]$, $E_b[i-1]$). The SoC bounds become simple variable bounds on $E_b[i]$, which the solver handles separately and efficiently. The problem has 2N decision variables (v and Eb) and N equality constraints, but the structure is clean enough that each Newton step is fast.
+
+The name "shooting" comes from optimal control: you're "shooting" forward through the dynamics (integrating $E_b[i+1] = f(E_b[i], v[i])$) while the optimizer adjusts both states and inputs simultaneously.
+
+#### IPOPT — interior-point optimization
+
+IPOPT (Interior Point OPTimizer) solves NLPs of the form: minimize $f(x)$ subject to $g(x) = 0$ (equality constraints) and $l \leq x \leq u$ (variable bounds). It's the standard open-source solver for smooth medium-scale NLPs (tens to hundreds of thousands of variables).
+
+The algorithm: IPOPT converts the variable bounds into a *barrier function* — instead of hard constraints $x \geq l$, it adds $-\mu \sum_i \log(x_i - l_i)$ to the objective. For large $\mu$ this barrier is steep and pushes solutions away from the boundary; as $\mu \to 0$ the barrier vanishes and the solution converges to the true constrained optimum. IPOPT solves a sequence of these barrier subproblems with decreasing $\mu$.
+
+Each barrier subproblem is an equality-constrained NLP (objective + barrier function, equality constraints from $g(x) = 0$). IPOPT solves it with a **Newton step** on the first-order KKT conditions:
+
+$$\begin{pmatrix} H_L & A^T \\ A & 0 \end{pmatrix} \begin{pmatrix} \Delta x \\ \Delta \lambda \end{pmatrix} = -\begin{pmatrix} \nabla_x L \\ g(x) \end{pmatrix}$$
+
+where $H_L$ is the Hessian of the Lagrangian (objective + constraint penalties), $A$ is the constraint Jacobian, and $\lambda$ are the Lagrange multipliers. This linear system is solved by MUMPS (a sparse direct solver). For our problem the system is ~1000×1000 with bidiagonal structure — MUMPS factors it in O(N) time and each Newton step completes in milliseconds.
+
+With the shooting formulation, IPOPT converges in ~50–200 Newton steps. Total solve time per outer iteration: ~0.3–1 second.
+
+#### CasADi — symbolic differentiation and compilation
+
+CasADi is a framework for symbolic computation on NLPs. You write the objective and constraints as symbolic expressions (using `ca.MX.sym` variables), and CasADi automatically derives:
+- the objective gradient $\nabla f$
+- the constraint Jacobian $A$
+- the Lagrangian Hessian $H_L$
+
+using reverse-mode automatic differentiation (not finite differences — exact to machine precision). These are what IPOPT needs at every iteration, and they're the reason no hand-coded Jacobians are required.
+
+CasADi then generates C code for the NLP, JIT-compiles it once, and links it to IPOPT. The compiled function is ~10× faster to evaluate than interpreted Python. The key optimization: **parametric NLP**. Weather data (GHI, wind) and overnight charges are declared as *parameters* rather than constants baked into the graph. The solver is compiled once on the first call and reused across all 5 outer boundary-update iterations — only the parameter values and variable bounds (overnight SoC floors) change between calls. Compilation takes ~2 seconds; subsequent solves take ~0.3 seconds each.
+
+#### The outer boundary-update loop
+
+There is a chicken-and-egg problem: overnight stop locations (where the car is at 18:00) depend on the speed profile, but the speed profile depends on the overnight stop locations (which segments get the overnight charge, and which Eb variables get tighter lower bounds). Neither can be computed without the other.
+
+We break the cycle with a fixed-point iteration:
+
+1. Start with a rough speed estimate (22 m/s).
+2. Simulate arrival times → find where 18:00 occurs on the route → identify day boundaries.
+3. Run IPOPT with those boundaries, warm-started from the previous solution.
+4. Use the optimized speed profile as the new estimate. Go to 2.
+5. Stop when boundaries don't change (typically 2–4 outer iterations).
+
+The inner IPOPT solve (step 3) is the expensive part, but thanks to the compiled parametric solver and warm-starting, each outer iteration takes ~0.5 seconds. Total wall time for the full run: ~3 seconds on a 2600 km route with 499 segments.
 
 ### 2.3 Why these specific model terms
 
@@ -257,16 +320,16 @@ The optimizer minimizes `Σ d_i / v_i` (total race time) subject to these constr
 
 | Constraint | Equation | Implementation | Notes |
 |---|---|---|---|
-| Battery never runs out | `Eb_i ≥ Eb_min` for all i | ✅ Active — 250 Wh floor | |
-| Battery never overcharges | `Eb_i ≤ Eb_max` for all i | ✅ Active — 5000 Wh ceiling | Modeled as a constraint on the unclipped cumsum; does not capture lost solar when clipping is active (see §7.1) |
-| Finish with buffer | `Eb_N ≥ Eb_finish_min` | ✅ Active — 250 Wh | |
+| Battery never runs out | `Eb_i ≥ Eb_min` for all i | ✅ Active — 250 Wh floor | Variable lower bound on Eb[i]; IPOPT handles natively |
+| Battery never overcharges | `Eb_i ≤ Eb_max` for all i | ✅ Active — 5000 Wh ceiling | Variable upper bound on Eb[i] |
+| Finish with buffer | `Eb[N-1] ≥ Eb_finish_min` | ✅ Active — 250 Wh | Tighter lower bound on Eb[N-1] |
 | Speed limits (upper) | `v_i ≤ vlimit_i` for all i | ✅ Active — 65 mph / posted limit per segment | Speed limits read from GPX where tagged; default 65 mph elsewhere |
 | Minimum speed | `v_i ≥ vmin` | ✅ Active — 20 mph (8.94 m/s) | ASC 2026 §12.22 |
 | Discharge rate limit | `Pb_i / V_pack ≤ I_discharge_limit` | ✅ Active — 150 A / 100 V nominal | Encoded in per-segment speed upper bound via `max_speed_from_discharge_limit()` |
-| Per-checkpoint SoC | `Eb_checkpoint_k ≥ Eb_checkpoint_min` | ⚙️ Framework built, no checkpoints loaded | Awaiting Route Book for locations and times |
+| Per-checkpoint SoC | `Eb[cp_k] ≥ Eb_checkpoint_min` | ⚙️ Framework built, no checkpoints loaded | Awaiting Route Book for locations and times |
 | Checkpoint time windows | `t_open_k ≤ Σt_i ≤ t_close_k` at checkpoint k | ⚙️ Framework built, no checkpoints loaded | Awaiting Route Book |
-| Daily overnight SoC | `Eb_end_of_day_k ≥ Eb_overnight_min` | ✅ Active — 500 Wh floor per overnight stop | |
-| Regen ceiling clip on descents | `Eb_i ≤ Eb_max` when `Pm_i < 0` | ❌ Not enforced as a constraint | Regen efficiency modeled (η_regen = 0.65, placeholder) but no constraint prevents overcharge on steep descents; irrelevant on flat synthetic route |
+| Daily overnight SoC | `Eb[i_night_k] ≥ Eb_overnight_min` | ✅ Active — 500 Wh floor per overnight stop | Tighter lower bound on the overnight-stop segment's Eb variable |
+| Regen ceiling clip on descents | `Eb_i ≤ Eb_max` when `Pm_i < 0` | ✅ Enforced — ceiling is a hard variable bound | Eb_max is a variable upper bound on every Eb[i]; overcharge on regen descents is prevented |
 
 ### 6.1 Race rules — ASC 2026 (confirmed from Regs Rev C, May 2026)
 
@@ -294,27 +357,21 @@ The optimizer minimizes `Σ d_i / v_i` (total race time) subject to these constr
 
 ## 7. Known Optimizer Limitations
 
-### 7.1 SLSQP is a local optimizer — morning sprint problem
+### 7.1 Non-convex NLP — morning sprint problem
 
 On days where the battery starts full (or near-full), the true optimal strategy is to **sprint hard in the morning** to drain below Eb_max quickly, freeing headroom to capture solar through midday, then sprint again in the late afternoon to drain to the overnight floor. This produces a "W"-shaped battery curve.
 
-SLSQP doesn't find this because:
-- The fast optimizer path (`cumulative_energy_vec`) uses an **unclipped** cumsum with a `soc_ceil` constraint. In the optimizer's world, energy at the ceiling is still "carried" and available later — it doesn't model the physical reality that solar above Eb_max is permanently lost.
-- The `soc_ceil` Jacobian is computed only at the single argmax segment. SLSQP sees the constraint as satisfied (slack = 0) and doesn't get a gradient signal pointing toward "drain harder in the morning."
-- The symptom: battery pinned at Eb_max for ~110 km (segments 61–82) on day 1, wasting solar that could have been captured by going faster.
+IPOPT (like any local NLP solver) may not find this because the problem is **non-convex**: when net power is positive (solar exceeds load), $\Delta E_i$ is a concave function of $v_i$, making the SoC constraint $E_b[i] \geq E_b^{\min}$ non-convex. Multiple local optima can exist — in particular, "drive steady at the constraint boundary all day" and "sprint in the morning, coast in the afternoon" can both be KKT points.
 
-**Multi-seed experiment result (10 seeds, flat synthetic route):** all seeds from 32 km/h to 104.6 km/h (v_max) converge to the same solution. This means either:
-1. The solution is truly globally optimal on this flat route — v_max is not fast enough to drain the battery before the solar peak; or
-2. There is a better solution with a morning sprint, but the gradient landscape around the current solution doesn't point toward it from any of the tested starting points.
+The shooting formulation + exact Hessian makes IPOPT find the KKT point efficiently, but the specific local optimum found depends on the initial seed. With a v\* seed (near-constant speed), IPOPT converges to the near-constant-speed solution.
 
-To distinguish these, the next step is a **targeted morning sprint seed**: v_max for the first ~28 segments of each day (before the solar peak), v* for the remainder. This tests whether SLSQP can find a better solution from a starting point that already has the sprint shape, without a hardcoded rule.
+**Mitigation:** warm-starting from the previous outer iteration's solution helps maintain the solution basin across boundary updates. A targeted morning-sprint seed (v_max for segments where projected Eb would hit the ceiling, v\* elsewhere) would test whether a better local optimum exists on the real route.
 
 **Fixes (in order of effort):**
-1. **Morning sprint seed** — set seed speed to v_max for segments where projected Eb would exceed ~95% of Eb_max. Tests whether SLSQP can escape the current basin from a better-shaped starting point. More principled than a hardcoded heuristic.
-2. Warm-start from the previous optimizer run after re-estimating arrival times.
-3. **Global method (DP or stochastic search)** — models battery clipping exactly and guarantees a global optimum within discretization, at higher cost. A DP version was prototyped and removed to keep the codebase SLSQP-only; revisit it (or CMA-ES / simulated annealing) only if better seeding fails to close the gap.
+1. **Morning sprint seed** — v_max for segments where the v\* trajectory would pin Eb at the ceiling, v\* for the rest. Tests whether IPOPT finds a better local optimum from a sprint-shaped starting point.
+2. **Global method (DP)** — guarantees the global optimum within discretization; models battery clipping exactly. Revisit if the sprint seed finds meaningfully better solutions.
 
-**Priority:** V1 — this is a correctness issue, not just a refinement.
+**Priority:** V1 on a real route — on the flat synthetic route the battery doesn't pin at the ceiling at race speeds, so this hasn't been an active issue in testing.
 
 ---
 
