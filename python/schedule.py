@@ -8,6 +8,7 @@ Used by main.py to place weather queries and overnight constraints by day.
 from __future__ import annotations
 import math
 from datetime import datetime, timedelta
+from typing import Optional
 
 from python.params import VehicleParams
 from python.route import RouteSegment
@@ -15,6 +16,10 @@ from python.route import RouteSegment
 # ASC 2026 tour hours (Reg 12.10.A.1, nominal).
 RACE_START_HOUR = 9    # 09:00 local
 RACE_STOP_HOUR  = 18   # 18:00 local
+
+# ASC 2026 impound window (Reg 12.17.B.1, nominal).
+IMPOUND_START_HOUR = 20   # 20:00 local
+IMPOUND_END_HOUR   = 7    # 07:00 local
 
 
 def compute_arrival_times(
@@ -55,9 +60,9 @@ def find_day_boundaries(arrivals: list[datetime]) -> list[int]:
 
 def overnight_charge_Wh(
     vehicle: VehicleParams,
-    peak_ghi: float = 900.0,
-    impound_start_h: float = 20.0,
-    impound_end_h: float = 7.0,
+    peak_ghi: Optional[float] = None,
+    impound_start_h: float = IMPOUND_START_HOUR,
+    impound_end_h: float = IMPOUND_END_HOUR,
     restart_h: float = RACE_START_HOUR,
     day_end_h: float = RACE_STOP_HOUR,
 ) -> float:
@@ -65,9 +70,13 @@ def overnight_charge_Wh(
     Solar energy (Wh) collected at an overnight stop during non-impound hours.
 
     ASC 2026 impound is 20:00–07:00 (Reg 12.17.B.1), leaving two charging windows:
-    day-end→impound (18:00–20:00) and impound-end→restart (07:00–09:00). Uses the
-    same sine GHI model as synthetic_weather().
+    day-end→impound (18:00–20:00) and impound-end→restart (07:00–09:00). Uses a
+    standalone clear-sky sine GHI model (vehicle.overnight_charge_ghi) — independent
+    of whichever weather source drives the daytime segments.
     """
+    if peak_ghi is None:
+        peak_ghi = vehicle.overnight_charge_ghi
+
     def ghi(h: float) -> float:
         f = h / 24.0
         return peak_ghi * math.sin(math.pi * (f - 0.25) / 0.5) if 0.25 <= f <= 0.75 else 0.0

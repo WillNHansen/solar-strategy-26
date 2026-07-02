@@ -70,23 +70,6 @@ The `--plot` PNG stacks the optimized speed profile (top) over the battery traje
 python -m python.main --gpx gpx/Seg1A.gpx --start "2026-07-13 09:00" --plot results/strategy.png
 ```
 
-### Generate a synthetic route
-
-Creates a synthetic GPX for development and testing when the real route isn't available:
-
-```bash
-python -m python.make_synthetic_gpx
-```
-
-Output goes to `gpx/wsc_synthetic.gpx` by default.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--output` | `gpx/wsc_synthetic.gpx` | Output GPX path |
-| `--n-points` | 5000 | Number of waypoints (~500m spacing) |
-| `--noise` | 15.0 | Terrain elevation noise amplitude (m) |
-| `--wavelength` | 25.0 | Terrain noise wavelength (km) |
-
 ### Plotting from your own scripts
 
 Beyond the `--plot` flag, `python/plot.py` exposes:

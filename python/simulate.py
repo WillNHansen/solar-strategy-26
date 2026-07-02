@@ -86,7 +86,7 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
     Includes kinetic energy transitions: when speed changes between segments,
     the battery pays for acceleration (or recovers via regen on deceleration).
     This correctly penalises speed changes in addition to the steady-state
-    aero and rolling resistance terms.
+    drag and rolling resistance terms.
     """
     # Wind projection onto road axis
     relative = np.radians(arrays.wind_dir - arrays.heading)
@@ -96,11 +96,11 @@ def energy_deltas_vec(v: np.ndarray, arrays: RouteArrays, vehicle: VehicleParams
     # scalar physics.py path uses. They agree while CdA_yaw is None (the default).
     # If a yaw curve is added, vectorize it here too or the optimizer and the
     # final simulate() will disagree.
-    F_aero  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
+    F_drag  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
     F_roll  = vehicle.Crr * vehicle.m * vehicle.g                   # scalar, broadcasts
     F_grade = vehicle.m * vehicle.g * arrays.grade
 
-    Pm = v * (F_aero + F_roll + F_grade)   # motor shaft power (W); negative = regen
+    Pm = v * (F_drag + F_roll + F_grade)   # motor shaft power (W); negative = regen
 
     # Battery power: positive = discharging, negative = charging
     # skip_regen: clamp descents to zero battery draw (no energy recovery)
@@ -175,8 +175,8 @@ def energy_deltas_grad_vec(
                          + sub[j+1]  (if j+1 ≤ k, i.e. j ≤ k-1)
 
     Steady-state derivation (Pm ≥ 0 case):
-        Pm  = v * (F_aero + F_roll + F_grade)
-        dPm/dv = (F_aero + F_roll + F_grade) + rho*CdA*v*(v-vw)
+        Pm  = v * (F_drag + F_roll + F_grade)
+        dPm/dv = (F_drag + F_roll + F_grade) + rho*CdA*v*(v-vw)
         Pb  = Pm / eta_m   →   dPb/dv = dPm/dv / eta_m
         net = Ps - Pb      →   dnet/dv = -dPb/dv
         t_h = d / (v*3600) →   dt_h/dv = -d / (v²*3600)
@@ -187,13 +187,13 @@ def energy_deltas_grad_vec(
     relative = np.radians(arrays.wind_dir - arrays.heading)
     vw = arrays.wind_speed * np.cos(relative)
 
-    F_aero  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
+    F_drag  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
     F_roll  = vehicle.Crr * vehicle.m * vehicle.g
     F_grade = vehicle.m * vehicle.g * arrays.grade
 
-    Pm = v * (F_aero + F_roll + F_grade)
+    Pm = v * (F_drag + F_roll + F_grade)
 
-    dPm_dv = (F_aero + F_roll + F_grade) + vehicle.rho * vehicle.CdA_flat * v * (v - vw)
+    dPm_dv = (F_drag + F_roll + F_grade) + vehicle.rho * vehicle.CdA_flat * v * (v - vw)
     if arrays.skip_regen:
         dPb_dv = np.where(Pm >= 0, dPm_dv / vehicle.eta_m, 0.0)
     else:
@@ -284,10 +284,10 @@ def simulate(
         if arrays is not None:
             # Use modified arrays data so feature flags are respected
             vw     = arrays.wind_speed[i] * np.cos(np.radians(arrays.wind_dir[i] - arrays.heading[i]))
-            F_aero = 0.5 * vehicle.rho * vehicle.CdA_flat * (vi - vw) ** 2
+            F_drag = 0.5 * vehicle.rho * vehicle.CdA_flat * (vi - vw) ** 2
             F_roll = vehicle.Crr * vehicle.m * vehicle.g
             F_grad = vehicle.m * vehicle.g * float(arrays.grade[i])
-            Pm     = vi * (F_aero + F_roll + F_grad)
+            Pm     = vi * (F_drag + F_roll + F_grad)
             if arrays.skip_regen:
                 Pb = Pm / vehicle.eta_m if Pm >= 0 else 0.0
             else:

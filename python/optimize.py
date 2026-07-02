@@ -116,7 +116,7 @@ def _apply_features(
     if not features.kinetic:  arrays.skip_kinetic = True
     if not features.solar:    arrays.GHI          = np.zeros(arrays.N)
     if not features.regen:    arrays.skip_regen   = True
-    if not features.aero:     veh_kw["CdA_flat"]  = 0.0
+    if not features.drag:     veh_kw["CdA_flat"]  = 0.0
     vehicle = dataclasses.replace(vehicle, **veh_kw) if veh_kw else vehicle
     return arrays, vehicle
 
@@ -150,11 +150,11 @@ def _energy_sym(
     relative     = wind_dir_rad - heading_rad
     vw           = p_wind_speed * ca.cos(relative)
 
-    F_aero  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
+    F_drag  = 0.5 * vehicle.rho * vehicle.CdA_flat * (v - vw) ** 2
     F_roll  = vehicle.Crr * vehicle.m * vehicle.g
     F_grade = ca.DM(vehicle.m * vehicle.g * arrays.grade)
 
-    Pm = v * (F_aero + F_roll + F_grade)
+    Pm = v * (F_drag + F_roll + F_grade)
 
     alpha_pm = 0.5 * (1.0 + ca.tanh(Pm / _P_BLEND_W))
     if arrays.skip_regen:

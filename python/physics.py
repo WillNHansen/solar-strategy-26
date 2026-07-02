@@ -57,11 +57,11 @@ def motor_power_W(
     vw = headwind_ms(wx.wind_speed, wx.wind_dir, seg.heading_deg)
     beta = yaw_angle_deg(wx.wind_speed, wx.wind_dir, seg.heading_deg)
 
-    F_aero  = 0.5 * p.rho * p.CdA(beta) * (v - vw) ** 2
+    F_drag  = 0.5 * p.rho * p.CdA(beta) * (v - vw) ** 2
     F_roll  = p.Crr * p.m * p.g
     F_grade = p.m * p.g * seg.grade      # sin(θ), positive = uphill
 
-    return v * (F_aero + F_roll + F_grade)
+    return v * (F_drag + F_roll + F_grade)
 
 
 def battery_power_W(Pm: float, p: VehicleParams) -> float:

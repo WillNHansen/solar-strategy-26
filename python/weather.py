@@ -19,6 +19,11 @@ import requests
 
 from python.route import RouteSegment
 
+# Peak GHI (W/m²) at solar noon for the synthetic weather model's sine curve.
+# Only used for daytime segment weather — not shared with schedule.py's
+# overnight_charge_Wh(), which has its own independent clear-sky assumption.
+SYNTHETIC_PEAK_GHI = 900.0
+
 
 @dataclass
 class SegmentWeather:
@@ -104,7 +109,7 @@ def synthetic_weather(
     segments: list[RouteSegment],
     race_start: datetime,
     initial_speed_ms: float,
-    peak_ghi: float = 900.0,
+    peak_ghi: float = SYNTHETIC_PEAK_GHI,
     wind_speed: float = 5.0,
     wind_dir: float = 270.0,
     arrival_times: Optional[list[datetime]] = None,

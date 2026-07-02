@@ -53,9 +53,9 @@ $$P_{s,i} = GHI_i \cdot A_i \cdot \eta_s$$
 
 $$P_{b,i} = \begin{cases} P_{m,i} / \eta_m & P_{m,i} \geq 0 \;\text{(motoring — motor draws more than shaft delivers)} \\ P_{m,i} \cdot \eta_{\text{regen}} & P_{m,i} < 0 \;\text{(regen — battery receives less than shaft produces)} \end{cases}$$
 
-**4. Mechanical power** $P_{m,i}$ is the sum of three forces times speed. Aero drag grows as $(v - v_w)^2$ — cubic in speed, the dominant term at cruise. Rolling resistance is constant. Grade is linear in $\sin\theta$ and flips sign on descents, making $P_{m,i}$ negative when the car is being pushed faster than drag and rolling resistance alone would allow (i.e. regen opportunity):
+**4. Mechanical power** $P_{m,i}$ is the sum of three forces times speed. Drag grows as $(v - v_w)^2$ — cubic in speed, the dominant term at cruise. Rolling resistance is constant. Grade is linear in $\sin\theta$ and flips sign on descents, making $P_{m,i}$ negative when the car is being pushed faster than drag and rolling resistance alone would allow (i.e. regen opportunity):
 
-$$P_{m,i} = v_i \left(\underbrace{\tfrac{1}{2}\rho\; CdA\;(v_i - v_{w,i})^2}_{\text{aero}} + \underbrace{C_{rr}\,m\,g}_{\text{rolling}} + \underbrace{m\,g\cdot\text{grade}_i}_{\text{grade}}\right)$$
+$$P_{m,i} = v_i \left(\underbrace{\tfrac{1}{2}\rho\; CdA\;(v_i - v_{w,i})^2}_{\text{drag}} + \underbrace{C_{rr}\,m\,g}_{\text{rolling}} + \underbrace{m\,g\cdot\text{grade}_i}_{\text{grade}}\right)$$
 
 **5. Headwind component** $v_{w,i}$ projects the wind vector onto the road axis. A pure tailwind reduces effective airspeed; a pure crosswind contributes nothing (though it increases yaw angle and therefore $CdA$ — not yet modelled):
 
@@ -178,7 +178,7 @@ The inner IPOPT solve (step 3) is the expensive part, but thanks to the compiled
 
 | Term | Literature source | Rationale |
 |---|---|---|
-| Drivetrain: v³ aero + linear rolling | Betancur Eq. 1; confirmed by Pudney | Dominant power consumption terms. Rolling resistance linear; aero cubic — small speed increases are expensive. |
+| Drivetrain: v³ drag + linear rolling | Betancur Eq. 1; confirmed by Pudney | Dominant power consumption terms. Rolling resistance linear; drag cubic — small speed increases are expensive. |
 | `Ps = Ii·Ai·ηs·sin(φ)` | Betancur solar sub-model | Standard flat-panel model. GHI from Solcast replaces the irradiance model Betancur uses internally. |
 | `ηb` round-trip efficiency | Betancur | Simple and well-validated; battery quadratic loss is small relative to drivetrain at cruise. |
 | `I(b)` quadratic battery curve | Pudney | Captures voltage sag near discharge limit; relevant near Eb_min where the optimizer presses hardest. |

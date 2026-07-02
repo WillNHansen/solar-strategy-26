@@ -37,6 +37,12 @@ class VehicleParams:
     eta_s: float = 0.20     # TODO: panel + MPPT efficiency (confirm from datasheet)
                             # Midnight Sun uses 0.16; high-end GaAs cells reach 0.30+
 
+    # Clear-sky peak GHI (W/m²) used by the overnight-charge estimate
+    # (schedule.py::overnight_charge_Wh) for the 18:00-20:00 / 07:00-09:00
+    # charging windows — a standalone approximation, independent of whichever
+    # weather source (Solcast or synthetic) drives the daytime segments.
+    overnight_charge_ghi: float = 2000
+
     # ── Drivetrain ───────────────────────────────────────────────────────────
     # v1: constant motor efficiency. v2: replace with 2D (torque × RPM) lookup.
     eta_m: float = 0.97     # TODO: source from WaveSculptor datasheet or bench test
@@ -61,6 +67,11 @@ class VehicleParams:
     v_min: float = 8.94  # m/s = 20 mph — minimum in zones with posted limit ≥ 60 mph
     v_max: float = 29.06 # m/s = 65 mph — ASC maximum (or posted limit if lower)
 
+    # Cold-start speed guess (m/s) — bootstraps arrival times / weather queries /
+    # day boundaries before the first optimizer solve exists. Not physically
+    # meaningful; just needs to be a plausible cruise speed.
+    v_seed_estimate: float = 22.0
+
 
 @dataclass
 class ModelFeatures:
@@ -71,13 +82,13 @@ class ModelFeatures:
     so the equations themselves are unchanged — a disabled term simply has no
     magnitude. All flags default to True (full model).
     """
-    headwind: bool = True   # wind projection onto road axis (v_w term in aero drag)
+    headwind: bool = False   # wind projection onto road axis (v_w term in aero drag)
     grade:    bool = True   # road grade force (m·g·sin θ)
     rolling:  bool = True   # rolling resistance (C_rr·m·g)
     kinetic:  bool = True   # kinetic energy transitions between segments (½mv² term)
     solar:    bool = True   # solar power income (GHI·Ai·η_s)
-    regen:    bool = True   # energy recovery on descents (η_regen path)
-    aero:     bool = True   # aerodynamic drag (½ρ·CdA·(v−v_w)²)
+    regen:    bool = False   # energy recovery on descents (η_regen path)
+    drag:     bool = True   # aerodynamic drag (½ρ·CdA·(v−v_w)²)
 
 
 @dataclass
@@ -103,7 +114,7 @@ class RaceParams:
     # Overnight stops (multi-day races). Solar charging stops; car must arrive
     # with enough energy to reach cruising speed before solar ramps up next morning.
     overnight_segment_indices: list[int] = field(default_factory=list)
-    Eb_overnight_min: float = 500.0  # TODO: determine from next-day route analysis
+    Eb_overnight_min: float = 250  # TODO: determine from next-day route analysis
 
     # Energy (Wh) collected by solar panels during non-impound hours at each overnight stop.
     # One value per overnight stop, matching overnight_segment_indices.

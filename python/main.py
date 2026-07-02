@@ -36,7 +36,7 @@ def main() -> None:
                              "500m ~2 min, 2000m ~7s for a 3000km route.")
     parser.add_argument("--smooth",      type=int, default=5,
                         help="Grade smoothing window (default 5)")
-    parser.add_argument("--max-iter",    type=int, default=2000,
+    parser.add_argument("--max-iter",    type=int, default=6000,
                         help="SLSQP iteration limit (default 2000)")
     parser.add_argument("--verbose",     action="store_true")
     parser.add_argument("--output",      default=None,
@@ -63,16 +63,16 @@ def main() -> None:
     if args.solcast_key:
         print("Fetching Solcast weather forecasts...")
         _weather_fn = lambda arrivals: fetch_solcast(
-            segments, race_start, 22.0, args.solcast_key, arrival_times=arrivals)
+            segments, race_start, vehicle.v_seed_estimate, args.solcast_key, arrival_times=arrivals)
     else:
         print("Using synthetic weather (no Solcast key provided)")
         _weather_fn = lambda arrivals: synthetic_weather(
-            segments, race_start, 22.0, arrival_times=arrivals)
+            segments, race_start, vehicle.v_seed_estimate, arrival_times=arrivals)
 
     charge_per_night = overnight_charge_Wh(vehicle)
     print(f"  Overnight solar charge: {charge_per_night:.0f} Wh per stop")
 
-    v_iter          = np.full(len(segments), 22.0)  # cold-start estimate
+    v_iter          = np.full(len(segments), vehicle.v_seed_estimate)
     prev_boundaries = None
     result          = None
     x0              = None   # warm-start from previous solve
@@ -93,10 +93,8 @@ def main() -> None:
 
         weather = _weather_fn(arrivals)
         race = RaceParams(
-            Eb_start=vehicle.Eb_max,
-            Eb_finish_min=250.0,
+            Eb_start=vehicle.Eb_max,   # start full — derived from vehicle capacity, not a race constant
             overnight_segment_indices=day_boundaries,
-            Eb_overnight_min=500.0,
             overnight_charge_Wh=[charge_per_night] * len(day_boundaries),
         )
 
